@@ -106,6 +106,14 @@ function m:start()
   end
 
   m:_loadState()
+
+  -- TODO BUG: Don't create if already exists!
+  -- TODO BUG: Validate if the space index is maintained after moving the space
+  -- for id, activity in pairs(m.activities) do
+  --   if activity.permanent then
+  --     m:startActivity(id)
+  --   end
+  -- end
 end
 
 function m:show()
@@ -259,7 +267,7 @@ function m:_generateChoices()
   local choices = {}
 
   local spaceInfo = m:spaceInfo()
-  if spaceInfo.activity ~= nil then
+  if spaceInfo.activity ~= nil and not spaceInfo.activity.permanent then
     table.insert(choices,
       {
         action = "stop",
