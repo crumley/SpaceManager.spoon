@@ -106,14 +106,7 @@ function m:start()
   end
 
   m:_loadState()
-
-  -- TODO BUG: Don't create if already exists!
-  -- TODO BUG: Validate if the space index is maintained after moving the space
-  -- for id, activity in pairs(m.activities) do
-  --   if activity.permanent then
-  --     m:startActivity(id)
-  --   end
-  -- end
+  m:_reconcileState()
 end
 
 function m:show()
@@ -136,6 +129,11 @@ function m:createActivityRecord(activity)
     activityId = activity.id,
     windowIds = windowIds,
   }
+end
+
+function m:_resetState()
+  m.spaceRecordsBySpaceId = {}
+  hs.settings.set(m.settingsKey, {})
 end
 
 function m:_saveState()
@@ -165,6 +163,17 @@ function m:_loadState()
       end
     end
   end
+end
+
+function m:_reconcileState()
+  -- TODO: This is very broken!
+  -- TODO BUG: Validate if the space index is maintained after moving the space or if its an index
+  -- TODO validate activity records (windows, spaces, etc) creating spaces and migrating as needed.
+  -- for id, activity in pairs(m.activities) do
+  --   if activity.permanent and m.activityRecordsByActivityId[activity.id] == nil then
+  --     m:startActivity(id)
+  --   end
+  -- end
 end
 
 function m:getSpaceRecord(spaceId)
@@ -381,7 +390,7 @@ function m:closeAll()
     hs.spaces.closeMissionControl()
   end)
 
-  m:_saveState()
+  m:_resetState()
 end
 
 -- function m:clearCurrentSpace()
