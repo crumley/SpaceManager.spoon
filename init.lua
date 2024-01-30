@@ -206,6 +206,11 @@ function m:moveActivityToSpace(activityRecord, space)
 end
 
 function m:startActivity(activityId)
+  if activityId == nil then
+    local currentWindow = hs.window.focusedWindow()
+    -- TODO Need an adhoc activity
+  end
+
   local activity = m.activities[activityId]
   m.logger.d('startActivity', activity)
 
