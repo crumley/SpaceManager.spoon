@@ -5,6 +5,8 @@
 local logger = require("hs.logger")
 local chooser = require("hs.chooser")
 local application = require("hs.application")
+local spaces = require("hs.spaces")
+local fnutils = require("hs.fnutils")
 
 local m = {}
 m.__index = m
@@ -22,12 +24,10 @@ m.logger = logger.new('SpaceManager', 'debug')
 
 -- Hattip: https://apple.stackexchange.com/questions/419028/disable-the-dock-in-all-but-one-desktop-space-only
 m.dockOnPrimaryOnly = false
+
+m.settingsKey = m.name .. ".statev1"
 m.desktopLozenge = false
-m.spaceToActivity = {}
-m.spaceRecordsBySpaceId = {}
-m.activityRecordsByActivityId = {}
 m.activities = {}
-m.settingsKey = m.name .. ".spaceRecordsBySpaceId"
 
 local actions = {
   start = function(activityId)
@@ -39,7 +39,7 @@ local actions = {
   end,
 
   jump = function(activityId)
-    hs.spaces.gotoSpace(m.activityRecordsByActivityId[activityId].space)
+    spaces.gotoSpace(m.activityRecordsByActivityId[activityId].space)
   end,
 
   closeAll = function(x)
@@ -50,6 +50,9 @@ local actions = {
 
 function m:init()
   m.logger.d('init')
+
+  m.spaceRecordsBySpaceId = {}
+  m.activityRecordsByActivityId = {}
 
   m.chooser = chooser.new(function(choice)
     if choice then
@@ -69,7 +72,7 @@ function m:start()
   end
 
   if m.dockOnPrimaryOnly then
-    local w = hs.spaces.watcher.new(function(s)
+    local w = spaces.watcher.new(function(s)
       m:_onSpaceChanged(true)
     end)
     w.start(w)
@@ -121,7 +124,9 @@ function m:createActivityRecord(activity)
     local app = application(hint)
     if app ~= nil then
       local window = app:focusedWindow()
-      table.insert(windowIds, window:id())
+      if window then
+        table.insert(windowIds, window:id())
+      end
     end
   end
 
@@ -174,6 +179,49 @@ function m:_reconcileState()
   --     m:startActivity(id)
   --   end
   -- end
+
+
+  local screenId = hs.screen.primaryScreen():getUUID()
+  local spaces = spaces.allSpaces()[screenId]
+
+  m.logger.d('reconcile', screenId, spaces, hs.inspect(m.spaceRecordsBySpaceId))
+
+  -- local spaceRecord = {
+  --   spaceId = spaceId,
+  --   activityRecordsByActivityId = {}
+  -- }
+  -- m.spaceRecordsBySpaceId[spaceId] = spaceRecord
+  for spaceId, spaceRecord in pairs(m.spaceRecordsBySpaceId) do
+    m.logger.d('reconcile.spaceRecord', spaceId, spaceRecord)
+    -- Ensure space is still valid, if not nuke it and its activity
+    if fnutils.contains(spaces, spaceId) then
+      m.logger.d('reconcile.space_valid', spaceId, spaceRecord)
+      -- Space still exists, reconcile activityIds + windows
+    else
+      m.logger.d('reconcile.space_invalid', spaceId, spaceRecord)
+      -- Space doesn't exist, remove and stop activity
+      m.spaceRecordsBySpaceId[spaceId] = nil
+      for activityId, _ in pairs(spaceRecord.activityRecordsByActivityId) do
+        m.activityRecordsByActivityId[activityId] = nil
+      end
+    end
+  end
+
+  -- {
+  --   activityId = activity.id,
+  --   windowIds = windowIds,
+  -- }
+  for activityId, activityRecord in pairs(m.activityRecordsByActivityId) do
+    -- TODO?
+  end
+
+  for id, activity in pairs(m.activities) do
+    if activity.permanent and m.activityRecordsByActivityId[activity.id] == nil then
+      m:startActivity(id)
+    end
+  end
+
+  -- TODO reconcile order
 end
 
 function m:getSpaceRecord(spaceId)
@@ -200,7 +248,7 @@ function m:moveActivityToSpace(activityRecord, space)
   for _, wid in ipairs(activityRecord.windowIds) do
     local w = hs.window(wid)
     if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, space)
+      spaces.moveWindowToSpace(w, space)
     end
   end
 end
@@ -223,13 +271,13 @@ function m:startActivity(activityId)
   local space = m:getDefaultSpace()
   if activity["space"] then
     local screenId = hs.screen.primaryScreen():getUUID()
-    hs.spaces.addSpaceToScreen(screenId)
-    local spaces = hs.spaces.allSpaces()[screenId]
+    spaces.addSpaceToScreen(screenId)
+    local spaces = spaces.allSpaces()[screenId]
     space = spaces[#spaces]
   end
 
   m:moveActivityToSpace(activityRecord, space)
-  hs.spaces.gotoSpace(space)
+  spaces.gotoSpace(space)
 
   if activity["layout"] then
     hs.layout.apply(activity["layout"])
@@ -255,7 +303,7 @@ function m:stopActivity(activityId, keepSpace)
   for _, wid in ipairs(activityRecord.windowIds) do
     local w = hs.window(wid)
     if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, defaultSpace)
+      spaces.moveWindowToSpace(w, defaultSpace)
     end
   end
 
@@ -266,8 +314,8 @@ function m:stopActivity(activityId, keepSpace)
   end
 
   if not keepSpace then
-    hs.spaces.gotoSpace(defaultSpace)
-    hs.spaces.removeSpace(activityRecord.space)
+    spaces.gotoSpace(defaultSpace)
+    spaces.removeSpace(activityRecord.space)
   end
 
   m:_saveState()
@@ -332,13 +380,13 @@ end
 function m:getDefaultSpace()
   -- First space is the default space (for now)
   local screenId = hs.screen.primaryScreen():getUUID()
-  return hs.spaces.allSpaces()[screenId][1]
+  return spaces.allSpaces()[screenId][1]
 end
 
 function m:isPrimarySpace()
   local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
-  local currentSpaceId = hs.spaces.focusedSpace()
+  local firstSpaceId = spaces.allSpaces()[screenId][1]
+  local currentSpaceId = spaces.focusedSpace()
   return firstSpaceId == currentSpaceId
 end
 
@@ -355,9 +403,9 @@ end
 
 function m:spaceInfo()
   local screenId = hs.screen.primaryScreen():getUUID()
-  local allSpaces = hs.spaces.allSpaces()[screenId]
+  local allSpaces = spaces.allSpaces()[screenId]
   local firstSpaceId = allSpaces[1]
-  local currentSpaceId = hs.spaces.focusedSpace()
+  local currentSpaceId = spaces.focusedSpace()
   local spaceRecord = m.spaceRecordsBySpaceId[currentSpaceId]
   local activityId = spaceRecord and next(spaceRecord.activityRecordsByActivityId, nil) or nil
   local activity = activityId and m.activities[activityId] or nil
@@ -372,10 +420,10 @@ end
 
 function m:closeAll()
   local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
+  local firstSpaceId = spaces.allSpaces()[screenId][1]
 
   if not m:isPrimarySpace() then
-    hs.spaces.gotoSpace(firstSpaceId)
+    spaces.gotoSpace(firstSpaceId)
   end
 
   for activityId in pairs(m.activities) do
@@ -387,12 +435,12 @@ function m:closeAll()
   -- Update canvas
 
   hs.timer.doAfter(2, function()
-    hs.fnutils.ieach(hs.spaces.allSpaces()[screenId], function(s)
+    hs.fnutils.ieach(spaces.allSpaces()[screenId], function(s)
       if s ~= firstSpaceId then
-        r = hs.spaces.removeSpace(s, false)
+        r = spaces.removeSpace(s, false)
       end
     end)
-    hs.spaces.closeMissionControl()
+    spaces.closeMissionControl()
   end)
 
   m:_resetState()
@@ -400,13 +448,13 @@ end
 
 -- function m:clearCurrentSpace()
 --   local screenId = hs.screen.primaryScreen():getUUID()
---   local targetSpaceId = hs.spaces.allSpaces()[screenId][1]
---   local sourceSpaceId = hs.spaces.focusedSpace()
+--   local targetSpaceId = spaces.allSpaces()[screenId][1]
+--   local sourceSpaceId = spaces.focusedSpace()
 
---   local windows = hs.spaces.windowsForSpace(sourceSpaceId)
+--   local windows = spaces.windowsForSpace(sourceSpaceId)
 
 --   hs.fnutils.each(windows, function(w)
---     hs.spaces.moveWindowToSpace(w, targetSpaceId)
+--     spaces.moveWindowToSpace(w, targetSpaceId)
 --   end)
 -- end
 
