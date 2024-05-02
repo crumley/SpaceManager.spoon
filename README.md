@@ -2,6 +2,8 @@
 
 A template for a spoon project
 
+https://github.com/Olivine-Labs/lua-style-guide
+
 # Installation
 
  - install [Hammerspoon](http://www.hammerspoon.org/) - a powerfull automation tool for OS X

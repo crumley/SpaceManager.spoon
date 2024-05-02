@@ -2,9 +2,22 @@
 ---
 ---
 
-local logger = require("hs.logger")
-local chooser = require("hs.chooser")
-local application = require("hs.application")
+local hslogger = require("hs.logger")
+local hschooser = require("hs.chooser")
+local hsapplication = require("hs.application")
+local hssettings = require("hs.settings")
+local hsspaces = require("hs.spaces")
+local hsinspect = require("hs.inspect")
+local hswindow = require("hs.window")
+local hscanvas = require("hs.canvas")
+local hsdrawing = require("hs.drawing")
+local hslayout = require("hs.layout")
+local hsscreen = require("hs.screen")
+local hstimer = require("hs.timer")
+local hsfnutils = require("hs.fnutils")
+local hseventtap = require("hs.eventtap")
+local hsosascript = require("hs.osascript")
+local hsnotify = require("hs.notify")
 
 local m = {}
 m.__index = m
@@ -16,7 +29,7 @@ m.author = "crumley@gmail.com"
 m.license = "MIT"
 m.homepage = "https://github.com/Hammerspoon/Spoons"
 
-m.logger = logger.new('SpaceManager', 'debug')
+m.logger = hslogger.new('SpaceManager', 'debug')
 
 -- Settings
 
@@ -30,21 +43,31 @@ m.desktopLozenge = false
 m.activities = {}
 
 local actions = {
-  start = function (activityId)
+  start = function (choice)
+    local activityId = choice["activityId"]
     m:startActivity(activityId)
   end,
 
-  stop = function (activityId)
-    m:stopActivity(activityId)
+  stop = function (choice)
+    local activityRecordId = choice["activityRecordId"]
+    m:stopActivity(activityRecordId)
   end,
 
-  jump = function (activityId)
-    hs.spaces.gotoSpace(m.activityRecordsByActivityId[activityId].space)
+  jump = function (choice)
+    local activityRecordId = choice["activityRecordId"]
+    local activityRecord = hsfnutils.find(m.state.activityRecords,
+      function (ar) return ar.id == activityRecordId end)
+    if activityRecord ~= nil and activityRecord.space ~= nil then
+      hsspaces.gotoSpace(activityRecord.space)
+    end
   end,
 
-  closeAll = function (x)
-    -- Do the thing
+  closeAll = function ()
     m:closeAll()
+  end,
+
+  reset = function ()
+    m:reset()
   end,
 }
 
@@ -61,12 +84,12 @@ function m:init()
     spaceRecords = {}
   }
 
-  m.chooser = chooser.new(function (choice)
+  m.chooser = hschooser.new(function (choice)
     if choice then
       local actionName = choice["action"]
       if actionName ~= nil then
         m.logger.d('Select action', actionName)
-        actions[actionName](choice["activityId"])
+        actions[actionName](choice)
         return
       end
     end
@@ -79,7 +102,7 @@ function m:start()
   end
 
   if m.dockOnPrimaryOnly then
-    local w = hs.spaces.watcher.new(function (s)
+    local w = hsspaces.watcher.new(function (s)
       m:_onSpaceChanged(true)
     end)
     w.start(w)
@@ -87,20 +110,20 @@ function m:start()
   end
 
   if m.desktopLozenge then
-    local screen = hs.screen.primaryScreen()
+    local screen = hsscreen.primaryScreen()
     local res = screen:fullFrame()
-    m.canvas = hs.canvas.new({
+    m.canvas = hscanvas.new({
       x = 20,
       y = res.h - 18,
       w = 500,
       h = 18
     })
-    m.canvas:behavior(hs.canvas.windowBehaviors.canJoinAllSpaces)
-    m.canvas:level(hs.canvas.windowLevels.desktopIcon)
+    m.canvas:behavior(hscanvas.windowBehaviors.canJoinAllSpaces)
+    m.canvas:level(hscanvas.windowLevels.desktopIcon)
     m.canvas[1] = {
       type = "rectangle",
       action = "fill",
-      fillColor = { color = hs.drawing.color.black, alpha = 0.5 },
+      fillColor = { color = hsdrawing.color.black, alpha = 0.5 },
       roundedRectRadii = { xRadius = 5, yRadius = 5 },
     }
     m.canvas[2] = {
@@ -109,7 +132,7 @@ function m:start()
       text = m:spaceInfoText(),
       textFont = "Courier",
       textSize = 16,
-      textColor = hs.drawing.color.osx_green,
+      textColor = hsdrawing.color.osx_green,
       textAlignment = "left",
     }
     m.canvas:show()
@@ -125,8 +148,8 @@ function m:show()
 end
 
 function m:_resetState()
-  m.spaceRecordsBySpaceId = {}
-  hs.settings.set(m.settingsKey, {})
+  m.state.spaceRecordsBySpaceId = {}
+  hssettings.set(m.settingsKey, {})
 end
 
 function m:_saveState()
@@ -137,43 +160,52 @@ function m:_saveState()
     spaceRecordsBySpaceId = {},
   }
 
-  for k, v in pairs(m.spaceRecordsBySpaceId) do
+  for k, v in pairs(m.state.spaceRecordsBySpaceId) do
     state.spaceRecordsBySpaceId[tostring(k)] = v
   end
 
-  state.activityRecords = m.activityRecords
-  state.spaceRecords = m.spaceRecords
+  state.activityRecords = m.state.activityRecords
+  state.spaceRecords = m.state.spaceRecords
 
-  m.logger.d("Saving state", hs.inspect(state))
+  m.logger.d("Saving state", hsinspect(state))
 
-  hs.settings.set(m.settingsKey, state)
+  hssettings.set(m.settingsKey, state)
 end
 
 function m:_loadState()
   local maxActivityRecordIndex = m.activeRecordIdIndex
 
-  local state = hs.settings.get(m.settingsKey)
-  if state ~= nil then
-    m.logger.i("Loading state", hs.inspect(state))
+  local state = hssettings.get(m.settingsKey)
+  -- if state ~= nil then
+  --   m.logger.i("Loading state", hsinspect(state))
 
-    if state.version ~= nil then
-      if state.version == 1 then
-        for k, spaceRecord in pairs(state.spaceRecordsBySpaceId) do
-          -- TODO validate state
-          m.spaceRecordsBySpaceId[tonumber(k)] = spaceRecord
-          for activityId, activityRecord in pairs(spaceRecord.activityRecordsByActivityId) do
-            maxActivityRecordIndex = activityRecord.id ~= nil and math.max(activityRecord.id, maxActivityRecordIndex) or
-                maxActivityRecordIndex
-            m.activityRecordsByActivityId[activityId] = activityRecord
-          end
-        end
-      end
-    end
-  else
-    m.logger.i("Saved state did not have a version, refusing to honor.")
-  end
+  --   if state.version ~= nil then
+  --     if state.version == 1 then
+  --       for k, spaceRecord in pairs(state.spaceRecordsBySpaceId) do
+  --         -- TODO validate state
+  --         m.state.spaceRecordsBySpaceId[tonumber(k)] = spaceRecord
+  --         for activityId, activityRecord in pairs(spaceRecord.activityRecordsByActivityId) do
+  --           maxActivityRecordIndex = activityRecord.id ~= nil and math.max(activityRecord.id, maxActivityRecordIndex) or
+  --               maxActivityRecordIndex
+  --           m.state.activityRecordsByActivityId[activityId] = activityRecord
+  --         end
+  --       end
+  --     else
+  --       m.logger.i("Saved state did not have a version, refusing to honor.")
+  --       for k, spaceRecord in pairs(state.spaceRecordsBySpaceId) do
+  --         -- TODO validate state
+  --         m.state.spaceRecordsBySpaceId[tonumber(k)] = spaceRecord
+  --         for activityId, activityRecord in pairs(spaceRecord.activityRecordsByActivityId) do
+  --           maxActivityRecordIndex = activityRecord.id ~= nil and math.max(activityRecord.id, maxActivityRecordIndex) or
+  --               maxActivityRecordIndex
+  --           m.state.activityRecordsByActivityId[activityId] = activityRecord
+  --         end
+  --       end
+  --     end
+  --   end
 
-  m.activeRecordIdIndex = maxActivityRecordIndex
+  --   m.activeRecordIdIndex = maxActivityRecordIndex
+  -- end
 end
 
 function m:_reconcileState()
@@ -181,7 +213,7 @@ function m:_reconcileState()
   -- TODO BUG: Validate if the space index is maintained after moving the space or if its an index
   -- TODO validate activity records (windows, spaces, etc) creating spaces and migrating as needed.
   -- for id, activity in pairs(m.activities) do
-  --   if activity.permanent and m.activityRecordsByActivityId[activity.id] == nil then
+  --   if activity.permanent and m.state.activityRecordsByActivityId[activity.id] == nil then
   --     m:startActivity(id)
   --   end
   -- end
@@ -193,12 +225,12 @@ function m:moveActivityToSpace(activityRecord, space)
 
   table.insert(spaceRecord.activityRecords, activityRecord)
   spaceRecord.activityRecordsByActivityId[activityRecord.activityId] = activityRecord
-  m.activityRecordsByActivityId[activityRecord.activityId] = activityRecord
+  m.state.activityRecordsByActivityId[activityRecord.activityId] = activityRecord
 
   for _, wid in ipairs(activityRecord.windowIds) do
-    local w = hs.window(wid)
+    local w = hswindow(wid)
     if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, space)
+      hsspaces.moveWindowToSpace(w, space)
     end
   end
 end
@@ -221,101 +253,92 @@ function m:startActivity(activityId, windows)
 
   local space = m:getDefaultSpace()
   if activity["space"] then
-    local screenId = hs.screen.primaryScreen():getUUID()
-    hs.spaces.addSpaceToScreen(screenId)
-    local spaces = hs.spaces.allSpaces()[screenId]
+    local screenId = hsscreen.primaryScreen():getUUID()
+    hsspaces.addSpaceToScreen(screenId)
+    local spaces = hsspaces.allSpaces()[screenId]
     space = spaces[#spaces]
   end
 
   m:moveActivityToSpace(activityRecord, space)
-  hs.spaces.gotoSpace(space)
+  hsspaces.gotoSpace(space)
 
   if activity["layout"] then
-    hs.layout.apply(activity["layout"])
+    hslayout.apply(activity["layout"])
   end
 
   m:_saveState()
 end
 
-function m:stopActivity(activityId, keepSpace)
-  m.logger.d('stopActivity', activityId)
+function m:stopActivity(activityRecordId, keepSpace)
+  m.logger.d('stopActivity', activityRecordId)
 
-  local activityRecord = m.activityRecordsByActivityId[activityId]
+  local activityRecord = hsfnutils.find(m.state.activityRecords,
+    function (ar) return ar.id == activityRecordId end)
 
   if activityRecord == nil then
+    m.logger.debug("No such activityRecord: ", activityRecordId)
     return
   end
 
-  m.activityRecordsByActivityId[activityId] = nil
+  local activityId = activityRecord.activityId
+  m.state.activityRecordsByActivityId[activityId] = nil
 
   -- TODO: close windows that are "owned" by the activity, move the others...
 
   local defaultSpace = m:getDefaultSpace()
   for _, wid in ipairs(activityRecord.windowIds) do
-    local w = hs.window(wid)
+    local w = hswindow(wid)
     if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, defaultSpace)
+      hsspaces.moveWindowToSpace(w, defaultSpace)
     end
   end
 
-  local spaceRecord = m.spaceRecordsBySpaceId[activityRecord.space]
+  local spaceRecord = m.state.spaceRecordsBySpaceId[activityRecord.space]
   spaceRecord.activityRecordsByActivityId[activityId] = nil
   if next(spaceRecord.activityRecordsByActivityId) == nil then
-    m.spaceRecordsBySpaceId[activityRecord.space] = nil
+    m.state.spaceRecordsBySpaceId[activityRecord.space] = nil
   end
 
   if not keepSpace then
-    hs.spaces.gotoSpace(defaultSpace)
-    hs.spaces.removeSpace(activityRecord.space)
+    hsspaces.gotoSpace(defaultSpace)
+    hsspaces.removeSpace(activityRecord.space)
   end
 
   m:_saveState()
 end
 
 function m:isStarted(activityId)
-  return m.activityRecordsByActivityId[activityId] ~= nil
-end
-
-function m:_generateStopableChoices()
-  local choices = {}
-
-  for _, activityRecord in pairs(m.activityRecords) do
-    table.insert(choices,
-      {
-        action = "stop",
-        activityRecordId = activityRecord.id,
-        text = "Stop: " .. activityRecord.name,
-        subText = ""
-      }
-    )
-  end
-
-  return choices
+  return m.state.activityRecordsByActivityId[activityId] ~= nil
 end
 
 function m:_generateChoices()
   local choices = {}
 
   local spaceInfo = m:spaceInfo()
-  if spaceInfo.activity ~= nil and not spaceInfo.activity.permanent then
-    table.insert(choices,
-      {
-        action = "stop",
-        activityId = spaceInfo.activity.id,
-        text = "Stop: " .. m.activities[spaceInfo.activity.id].text,
-        subText = ""
-      }
-    )
+  if spaceInfo.spaceRecord ~= nil then
+    for _, activityRecord in pairs(spaceInfo.spaceRecord.activityRecords) do
+      if not m.activities[activityRecord.activityId].permanent then
+        table.insert(choices,
+          {
+            action = "stop",
+            activityRecordId = activityRecord.id,
+            text = "Stop: " .. activityRecord.name,
+            subText = ""
+          }
+        )
+      end
+    end
   end
 
-  for activityId in pairs(m.activityRecordsByActivityId) do
-    local activity = m.activities[activityId]
-    local isCurrent = spaceInfo.activity ~= nil and spaceInfo.activity.id == activityId
+  for _, activityRecord in pairs(m.state.activityRecords) do
+    local activity = m.activities[activityRecord.activityId]
+    local isCurrent = spaceInfo ~= nil and spaceInfo.primaryActivityRecord ~= nil and
+        spaceInfo.primaryActivityRecord.id == activityRecord.id
     if not isCurrent then
       table.insert(choices, {
         action = "jump",
-        activityId = activityId,
-        text = "Goto: " .. activity["text"],
+        activityRecordId = activityRecord.id,
+        text = "Goto: " .. activityRecord.name,
         subText = activity["subText"]
       })
     end
@@ -347,14 +370,14 @@ end
 
 function m:getDefaultSpace()
   -- First space is the default space (for now)
-  local screenId = hs.screen.primaryScreen():getUUID()
-  return hs.spaces.allSpaces()[screenId][1]
+  local screenId = hsscreen.primaryScreen():getUUID()
+  return hsspaces.allSpaces()[screenId][1]
 end
 
 function m:isPrimarySpace()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
-  local currentSpaceId = hs.spaces.focusedSpace()
+  local screenId = hsscreen.primaryScreen():getUUID()
+  local firstSpaceId = hsspaces.allSpaces()[screenId][1]
+  local currentSpaceId = hsspaces.focusedSpace()
   return firstSpaceId == currentSpaceId
 end
 
@@ -372,29 +395,28 @@ function m:spaceInfoText()
 end
 
 function m:spaceInfo()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local allSpaces = hs.spaces.allSpaces()[screenId]
+  local screenId = hsscreen.primaryScreen():getUUID()
+  local allSpaces = hsspaces.allSpaces()[screenId]
   local firstSpaceId = allSpaces[1]
-  local currentSpaceId = hs.spaces.focusedSpace()
-  local spaceRecord = m.spaceRecordsBySpaceId[currentSpaceId]
-  local activityId = spaceRecord and next(spaceRecord.activityRecordsByActivityId, nil) or nil
-  local activity = activityId and m.activities[activityId] or nil
+  local currentSpaceId = hsspaces.focusedSpace()
+  local spaceRecord = m.state.spaceRecordsBySpaceId[currentSpaceId]
+  local activityRecord = spaceRecord and #spaceRecord.activityRecords > 0 and spaceRecord.activityRecords[1] or nil
 
   return {
     count = #allSpaces,
     isPrimary = firstSpaceId == currentSpaceId,
-    currentIndex = hs.fnutils.indexOf(allSpaces, currentSpaceId),
-    activity = activity,
+    currentIndex = hsfnutils.indexOf(allSpaces, currentSpaceId),
+    primaryActivityRecord = activityRecord,
     spaceRecord = spaceRecord,
   }
 end
 
 function m:closeAll()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
+  local screenId = hsscreen.primaryScreen():getUUID()
+  local firstSpaceId = hsspaces.allSpaces()[screenId][1]
 
   if not m:isPrimarySpace() then
-    hs.spaces.gotoSpace(firstSpaceId)
+    hsspaces.gotoSpace(firstSpaceId)
   end
 
   for activityId in pairs(m.activities) do
@@ -405,41 +427,41 @@ function m:closeAll()
   -- Save state
   -- Update canvas
 
-  hs.timer.doAfter(2, function ()
-    hs.fnutils.ieach(hs.spaces.allSpaces()[screenId], function (s)
+  hstimer.doAfter(2, function ()
+    hsfnutils.ieach(hsspaces.allSpaces()[screenId], function (s)
       if s ~= firstSpaceId then
-        r = hs.spaces.removeSpace(s, false)
+        r = hsspaces.removeSpace(s, false)
       end
     end)
-    hs.spaces.closeMissionControl()
+    hsspaces.closeMissionControl()
   end)
 
   m:_resetState()
 end
 
 -- function m:clearCurrentSpace()
---   local screenId = hs.screen.primaryScreen():getUUID()
---   local targetSpaceId = hs.spaces.allSpaces()[screenId][1]
---   local sourceSpaceId = hs.spaces.focusedSpace()
+--   local screenId = hsscreen.primaryScreen():getUUID()
+--   local targetSpaceId = hsspaces.allSpaces()[screenId][1]
+--   local sourceSpaceId = hsspaces.focusedSpace()
 
---   local windows = hs.spaces.windowsForSpace(sourceSpaceId)
+--   local windows = hsspaces.windowsForSpace(sourceSpaceId)
 
 --   hs.fnutils.each(windows, function(w)
---     hs.spaces.moveWindowToSpace(w, targetSpaceId)
+--     hsspaces.moveWindowToSpace(w, targetSpaceId)
 --   end)
 -- end
 
 function m:toggleDock()
-  hs.eventtap.keyStroke({ "cmd", "alt" }, "d")
+  hseventtap.keyStroke({ "cmd", "alt" }, "d")
 end
 
 function m:_isDockHidden()
   local asCommand = "tell application \"System Events\" to return autohide of dock preferences"
-  local ok, isDockHidden = hs.osascript.applescript(asCommand)
+  local ok, isDockHidden = hsosascript.applescript(asCommand)
 
   if not ok then
     local msg = "An error occurred getting the value of autohide for the Dock."
-    hs.notify.new({ title = "Hammerspoon", informativeText = msg }):send()
+    hsnotify.new({ title = "Hammerspoon", informativeText = msg }):send()
   end
 
   return isDockHidden
@@ -459,7 +481,7 @@ function m:_onSpaceChanged(checkTwice)
 
     -- Check once more after spaces settle...
     if checkTwice then
-      hs.timer.doAfter(1, function ()
+      hstimer.doAfter(1, function ()
         self:_onSpaceChanged(false)
       end)
     end
@@ -488,26 +510,34 @@ function m:_createActivityRecord(activity)
   local windowIds = {}
 
   for _, hint in ipairs(activity["apps"]) do
-    local app = application(hint)
+    local app = hsapplication(hint)
     if app ~= nil then
       local window = app:focusedWindow()
       table.insert(windowIds, window:id())
     end
   end
 
+  local name = activity.text
+  if not activity.permanent and not activity.singleton then
+    name = string.format("%s: %i", name, #m.state.activityRecords)
+  end
+
+  m.state.activeRecordIdIndex = m.state.activeRecordIdIndex + 1
   local activityRecord = {
-    name = string.format("%s: %i", activity.text, #m.activityRecords),
+    id = m.state.activeRecordIdIndex,
+    name = name,
     activityId = activity.id,
     windowIds = windowIds,
+    space = nil -- starts unassigned
   }
-  table.insert(m.activityRecords, activityRecord)
+  table.insert(m.state.activityRecords, activityRecord)
 
   return activityRecord
 end
 
 function m:getSpaceRecord(spaceId)
-  if m.spaceRecordsBySpaceId[spaceId] then
-    return m.spaceRecordsBySpaceId[spaceId]
+  if m.state.spaceRecordsBySpaceId[spaceId] then
+    return m.state.spaceRecordsBySpaceId[spaceId]
   end
 
   local spaceRecord = {
@@ -516,9 +546,9 @@ function m:getSpaceRecord(spaceId)
     activityRecords = {}
   }
 
-  table.insert(m.spaceRecords, spaceRecord)
+  table.insert(m.state.spaceRecords, spaceRecord)
 
-  m.spaceRecordsBySpaceId[spaceId] = spaceRecord
+  m.state.spaceRecordsBySpaceId[spaceId] = spaceRecord
   return spaceRecord
 end
 
