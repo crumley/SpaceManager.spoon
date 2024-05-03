@@ -23,6 +23,26 @@ function State.new()
     return state
 end
 
+function State:getActivityById(activityId)
+    assert(activityId ~= nil)
+    return self.activities[activityId]
+end
+
+function State:getActivitiesBySpaceId(spaceId)
+    assert(spaceId ~= nil)
+
+    local activities = {}
+    local space = self.spaces[spaceId]
+
+    if space ~= nil then
+        for activityId, _ in pairs(space) do
+            table.insert(activities, self:getActivityById(activityId))
+        end
+    end
+
+    return activities
+end
+
 function State:activityStarted(typeId)
     assert(typeId ~= nil)
 
@@ -43,13 +63,41 @@ function State:activityStopped(activityId)
 end
 
 function State:activityMoved(activityId, spaceId)
-    assert(self.activities[activityId] ~= nil)
-    self.activities[activityId].spaceId = spaceId
+    local activity = self.activities[activityId]
+    assert(activity ~= nil)
+
+    -- Remove activity from any previous space
+    if activity.spaceId ~= nil then
+        local space = self.spaces[activity.spaceId]
+        if space then
+            space[activityId] = nil
+        end
+    end
+
+    -- Add activity to new space
+    if spaceId ~= nil then
+        if (self.spaces[spaceId] ~= nil) then
+            self.spaces[spaceId][activityId] = true
+        else
+            self.spaces[spaceId] = { [activityId] = true }
+        end
+    end
+
+    activity.spaceId = spaceId
 end
 
 function State:windowMoved(windowId, activityId)
-    assert(self.activities[activityId] ~= nil)
-    self.activities[activityId].windowIds[windowId] = 1
+    -- Remove window from any other activity
+    for id, activity in pairs(self.activities) do
+        if id ~= activityId then
+            activity.windowIds[windowId] = nil
+        end
+    end
+
+    -- Add window to the new activity
+    if activityId ~= nil and self.activities[activityId] ~= nil then
+        self.activities[activityId].windowIds[windowId] = true
+    end
 end
 
 function State:toTable()
