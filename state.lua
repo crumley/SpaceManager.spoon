@@ -1,5 +1,4 @@
 local Activity = {}
-
 function Activity.new(id, typeId, name)
     local activity = {}
     setmetatable(activity, { __index = Activity })
@@ -9,6 +8,16 @@ function Activity.new(id, typeId, name)
     activity.windowIds = {}
     activity.spaceId = nil
     return activity
+end
+
+local Space = {}
+function Space.new(spaceId, index)
+    local space = {}
+    setmetatable(space, { __index = Space })
+    space.id = spaceId
+    space.index = index
+    space.activityIds = {}
+    return space
 end
 
 local State = {}
@@ -32,11 +41,9 @@ function State:getActivitiesBySpaceId(spaceId)
     assert(spaceId ~= nil)
 
     local activities = {}
-    local space = self.spaces[spaceId]
-
-    if space ~= nil then
-        for activityId, _ in pairs(space) do
-            table.insert(activities, self:getActivityById(activityId))
+    for _, activity in pairs(self.activities) do
+        if activity.spaceId == spaceId then
+            table.insert(activities, activity)
         end
     end
 
@@ -62,6 +69,26 @@ function State:activityStopped(activityId)
     self.activities[activityId] = nil
 end
 
+function State:spaceAdded(spaceId, index)
+    self:_getOrCreateSpace(spaceId).index = index
+end
+
+function State:spaceMoved(spaceId, index)
+    self:_getOrCreateSpace(spaceId).index = index
+end
+
+function State:spaceRemoved(spaceId)
+    -- TODO should the indexes be updated? Maybe no if all we care about is
+    -- relative indexes for those that remain.
+    self.spaces[spaceId] = nil
+end
+
+function State:_getOrCreateSpace(spaceId)
+    local space = Space.new(spaceId, nil)
+    self.spaces[spaceId] = space
+    return space
+end
+
 function State:activityMoved(activityId, spaceId)
     local activity = self.activities[activityId]
     assert(activity ~= nil)
@@ -70,17 +97,14 @@ function State:activityMoved(activityId, spaceId)
     if activity.spaceId ~= nil then
         local space = self.spaces[activity.spaceId]
         if space then
-            space[activityId] = nil
+            space.activityIds[activityId] = nil
         end
     end
 
     -- Add activity to new space
     if spaceId ~= nil then
-        if (self.spaces[spaceId] ~= nil) then
-            self.spaces[spaceId][activityId] = true
-        else
-            self.spaces[spaceId] = { [activityId] = true }
-        end
+        local space = self:_getOrCreateSpace(spaceId)
+        space.activityIds[activityId] = true
     end
 
     activity.spaceId = spaceId
