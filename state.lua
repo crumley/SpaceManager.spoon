@@ -32,6 +32,32 @@ function State.new()
     return state
 end
 
+function State.fromTable(tableState)
+    if tableState.version == 1 then
+        local state = State.new()
+        state.activities = tableState.activities
+        state.version = tableState.version
+
+        state._lastActivityIndex = 1
+        for id, _ in pairs(state.activities) do
+            state._lastActivityIndex = max(id, state._lastActivityIndex)
+        end
+
+        return state
+    end
+
+    return nil
+end
+
+function State:toTable()
+    -- TODO can this just be self?
+    return {
+        activity = self.activity,
+        spaces = self.spaces,
+        version = self.version,
+    }
+end
+
 function State:getActivityById(activityId)
     assert(activityId ~= nil)
     return self.activities[activityId]
@@ -122,15 +148,6 @@ function State:windowMoved(windowId, activityId)
     if activityId ~= nil and self.activities[activityId] ~= nil then
         self.activities[activityId].windowIds[windowId] = true
     end
-end
-
-function State:toTable()
-    -- TODO can this just be self?
-    return {
-        activity = self.activity,
-        spaces = self.spaces,
-        version = self.version,
-    }
 end
 
 return State
