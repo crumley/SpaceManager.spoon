@@ -149,6 +149,17 @@ function m:startActivityFromTemplate(templateId, windowObjs)
   m:_saveState()
 end
 
+function m:jumpToActivityId(activityId)
+  local space = m.state:getSpaceByActivityId(activityId)
+  if space == nil then
+    space = m:_getDefaultSpace()
+  end
+
+  if space ~= hsspaces.focusedSpace() then
+    hsspaces.gotoSpace(space)
+  end
+end
+
 function m:stopActivity(activityId, keepSpace)
   m.logger.d('stopActivity', activityId)
 
@@ -156,8 +167,10 @@ function m:stopActivity(activityId, keepSpace)
 
   -- TODO: close windows that are "owned" by the activity, move the others...
 
+  local windowIds = m.state:getWindowsByActivityId(activityId)
+
   local defaultSpace = m:_getDefaultSpace()
-  for _, wid in ipairs(activityRecord.windowIds) do
+  for wid, _ in ipairs(activity.windowIds) do
     local w = hswindow(wid)
     if w ~= nil then
       hsspaces.moveWindowToSpace(w, defaultSpace)
@@ -165,17 +178,21 @@ function m:stopActivity(activityId, keepSpace)
   end
 
   if not keepSpace then
-    hsspaces.gotoSpace(defaultSpace)
-    hsspaces.removeSpace(activityRecord.space)
+    local space = m.state:getSpaceByActivityId(activityId)
+    if space ~= nil then
+      hsspaces.gotoSpace(defaultSpace)
+      hsspaces.removeSpace(activityRecord.space)
+    end
   end
+
+  m.state:activityStopped(activityId)
 
   m:_saveState()
 end
 
-function m:moveActivityToSpace(activityRecord, space)
-  -- todo
-
-  for _, wid in ipairs(activityRecord.windowIds) do
+function m:moveActivityToSpace(activityId, space)
+  m.state:activityMoved(activityId, space)
+  for wid, _ in pairs(m.state:getWindowsByActivityId(activityId)) do
     local w = hswindow(wid)
     if w ~= nil then
       hsspaces.moveWindowToSpace(w, space)
@@ -191,7 +208,7 @@ function m:closeAll()
     hsspaces.gotoSpace(firstSpaceId)
   end
 
-  for activityId in pairs(m.activityTemplates) do
+  for activityId, _ in pairs(m.state.activities) do
     m:stopActivity(activityId, true)
   end
 
@@ -208,18 +225,19 @@ function m:closeAll()
     hsspaces.closeMissionControl()
   end)
 
-  m:_resetState()
+  m:reset()
 end
 
-function m:cleanUp() 
+function m:cleanup() 
   -- take what is in m.state and make reality match as best as possible
   -- (call this after restoreState)
+  return nil
 end
 
 function m:reset()
   m.state = State.new()
   m:_saveState()
-  m:cleanUp()
+  m:cleanup()
 end
 
 function m:_createCanvas() 
@@ -258,11 +276,11 @@ end
 function m:_saveState()
   m.canvas[2].text = m:_spaceInfoText()
 
-  local state = m.state:toTable()
+  local stateTable = m.state:toTable()
 
-  m.logger.d("Saving state", hsinspect(state))
+  m.logger.d("Saving state", hsinspect(stateTable))
 
-  hssettings.set(m.settingsKey, state)
+  hssettings.set(m.settingsKey, stateTable)
 end
 
 function m:_restoreState()
@@ -271,6 +289,7 @@ function m:_restoreState()
   m.logger.d("Restoring state", hsinspect(stateTable))
   if stateTable ~= nil then
     local state = State.fromTable(stateTable)
+    -- todo reconcile
   end
 end
 
@@ -292,10 +311,8 @@ function m:_spaceInfoText()
   local spaceName = "(Unmanaged)"
   if info.isPrimary then
     spaceName = "Primary"
-  elseif info.spaceRecord ~= nil and #info.spaceRecord.activityRecords > 0 then
-    spaceName = info.spaceRecord.activityRecords[1].name
-  elseif info.activity then
-    spaceName = info.activity.text
+  elseif info.primaryActivity ~= nil then
+    spaceName = info.primaryActivity.name
   end
   return string.format(" %s (%d/%d)", spaceName, info.currentIndex, info.count)
 end
@@ -307,14 +324,18 @@ function m:_spaceInfo()
   local currentSpaceId = hsspaces.focusedSpace()
 
   local activities = m.state:getActivitiesBySpaceId(currentSpaceId)
-  local activityRecord = activities ~= nil and #activities > 0 and activities[1] or nil
+  local activity = activities ~= nil and #activities > 0 and activities[1] or nil
 
   return {
     count = #allSpaces,
     isPrimary = firstSpaceId == currentSpaceId,
     currentIndex = hsfnutils.indexOf(allSpaces, currentSpaceId),
-    primaryActivityRecord = activityRecord
+    primaryActivity = activity
   }
+end
+
+function m:_toggleDock()
+  hs.eventtap.keyStroke({ "cmd", "alt" }, "d")
 end
 
 function m:_isDockHidden()
@@ -334,11 +355,11 @@ function m:_onSpaceChanged(checkTwice)
 
   if m.dockOnPrimaryOnly then
     if m:_isPrimarySpace() and isDockHidden then
-      m:toggleDock()
+      m:_toggleDock()
     end
 
     if not m:_isPrimarySpace() and not isDockHidden then
-      m:toggleDock()
+      m:_toggleDock()
     end
 
     -- Check once more after spaces settle...

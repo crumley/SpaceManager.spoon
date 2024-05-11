@@ -35,12 +35,14 @@ end
 function State.fromTable(tableState)
     if tableState.version == 1 then
         local state = State.new()
-        state.activities = tableState.activities
-        state.version = tableState.version
 
-        state._lastActivityIndex = 1
-        for id, _ in pairs(state.activities) do
-            state._lastActivityIndex = max(id, state._lastActivityIndex)
+        for k, v in pairs(tableState.activities) do
+            state.activities[tonumber(k)] = v
+            state._lastActivityIndex = math.max(v.id, state._lastActivityIndex)
+        end
+
+        for k, v in pairs(tableState.spaces) do
+            state.spaces[tonumber(k)] = v
         end
 
         return state
@@ -50,17 +52,46 @@ function State.fromTable(tableState)
 end
 
 function State:toTable()
-    -- TODO can this just be self?
-    return {
-        activity = self.activity,
-        spaces = self.spaces,
+    local ret = {
+        activities = tableKeysToString(self.activities),
+        spaces = tableKeysToString(self.spaces),
         version = self.version,
     }
+
+    return ret
+end
+
+function tableKeysToString(t)
+    if (type(elem) ~= "table") then
+        return t
+    end
+
+    local ret = {}
+    for k, v in pairs(t) do
+        ret[tostring(k)] = tableKeysToString(v)
+    end
+    return ret
 end
 
 function State:getActivityById(activityId)
     assert(activityId ~= nil)
     return self.activities[activityId]
+end
+
+
+function State:getActivityById1()
+    return self.activities[1]
+end
+
+function State:getSpaceByActivityId(activityId)
+    assert(activityId ~= nil)
+    local activity = self.activities[activityId]
+    return activity ~= nil and activity.spaceId or nil
+end
+
+function State:getWindowsByActivityId(activityId)
+    assert(activityId ~= nil)
+    return self.activities[activityId].windowIds
 end
 
 function State:getActivitiesBySpaceId(spaceId)
@@ -93,26 +124,6 @@ end
 function State:activityStopped(activityId)
     assert(self.activities[activityId] ~= nil)
     self.activities[activityId] = nil
-end
-
-function State:spaceAdded(spaceId, index)
-    self:_getOrCreateSpace(spaceId).index = index
-end
-
-function State:spaceMoved(spaceId, index)
-    self:_getOrCreateSpace(spaceId).index = index
-end
-
-function State:spaceRemoved(spaceId)
-    -- TODO should the indexes be updated? Maybe no if all we care about is
-    -- relative indexes for those that remain.
-    self.spaces[spaceId] = nil
-end
-
-function State:_getOrCreateSpace(spaceId)
-    local space = Space.new(spaceId, nil)
-    self.spaces[spaceId] = space
-    return space
 end
 
 function State:activityMoved(activityId, spaceId)
@@ -148,6 +159,26 @@ function State:windowMoved(windowId, activityId)
     if activityId ~= nil and self.activities[activityId] ~= nil then
         self.activities[activityId].windowIds[windowId] = true
     end
+end
+
+function State:spaceAdded(spaceId, index)
+    self:_getOrCreateSpace(spaceId).index = index
+end
+
+function State:spaceMoved(spaceId, index)
+    self:_getOrCreateSpace(spaceId).index = index
+end
+
+function State:spaceRemoved(spaceId)
+    -- TODO should the indexes be updated? Maybe no if all we care about is
+    -- relative indexes for those that remain.
+    self.spaces[spaceId] = nil
+end
+
+function State:_getOrCreateSpace(spaceId)
+    local space = Space.new(spaceId, nil)
+    self.spaces[spaceId] = space
+    return space
 end
 
 return State

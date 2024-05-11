@@ -122,4 +122,26 @@ describe("State", function ()
             state:getActivityById(a2).windowIds
         )
     end)
+
+    it("should roundtrip to table and back", function ()
+        local state1 = State.new()
+
+        local a1 = state1:activityStarted("a1")
+        local a12 = state1:activityStarted("a1")
+        local a2 = state1:activityStarted("a2")
+
+        state1:activityMoved( a1, 2 )
+        state1:windowMoved( "w1", a1 )
+        state1:windowMoved( "w2", a1 )
+        state1:windowMoved( "w3", a12 )
+        state1:windowMoved( "w4", a2 )
+
+        local t = state1:toTable()
+        local state2 = State.fromTable(t) 
+
+        assert.are.same(
+            state1,
+            state2
+        ) 
+    end)
 end)
