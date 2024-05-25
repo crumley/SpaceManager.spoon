@@ -92,6 +92,8 @@ function m:init()
 end
 
 function m:start()
+  m.logger.d("start: allSpaces: ", hsinspect(hsspaces.spacesForScreen("primary")))
+
   for id, template in pairs(m.activityTemplates) do
     template.id = id
   end
@@ -119,7 +121,7 @@ end
 
 function m:startActivityFromTemplate(templateId, windowObjs)
   local template = m.activityTemplates[templateId]
-  m.logger.d('startActivity template=', template)
+  m.logger.d('startActivity template:', template)
 
   local activityId = m.state:activityStarted(templateId)
 
@@ -131,12 +133,17 @@ function m:startActivityFromTemplate(templateId, windowObjs)
     end
   end
 
+  for _, hint in ipairs(template["apps"]) do
+    local app = hsapplication(hint)
+    if app ~= nil then
+      local window = app:focusedWindow()
+      m.state:windowMoved(window:id(), activityId)
+    end
+  end
+
   local space = m:_getDefaultSpace()
   if template["space"] then
-    local screenId = hsscreen.primaryScreen():getUUID()
-    hsspaces.addSpaceToScreen(screenId)
-    local spaces = hsspaces.allSpaces()[screenId]
-    space = spaces[#spaces]
+    space = m:_createNewSpace()
   end
 
   m:moveActivityToSpace(activityId, space)
@@ -164,13 +171,12 @@ function m:stopActivity(activityId, keepSpace)
   m.logger.d('stopActivity', activityId)
 
   -- TODO
-
   -- TODO: close windows that are "owned" by the activity, move the others...
 
   local windowIds = m.state:getWindowsByActivityId(activityId)
 
   local defaultSpace = m:_getDefaultSpace()
-  for wid, _ in ipairs(activity.windowIds) do
+  for wid, _ in ipairs(windowIds) do
     local w = hswindow(wid)
     if w ~= nil then
       hsspaces.moveWindowToSpace(w, defaultSpace)
@@ -191,9 +197,12 @@ function m:stopActivity(activityId, keepSpace)
 end
 
 function m:moveActivityToSpace(activityId, space)
+  local windows = m.state:getWindowsByActivityId(activityId)
+  m.logger.d('Moving Activity to space', activityId, space, hsinspect(windows))
   m.state:activityMoved(activityId, space)
-  for wid, _ in pairs(m.state:getWindowsByActivityId(activityId)) do
+  for wid, _ in pairs(windows) do
     local w = hswindow(wid)
+    m.logger.d('  Moving activity window', wid, w, activityId )
     if w ~= nil then
       hsspaces.moveWindowToSpace(w, space)
     end
@@ -287,10 +296,88 @@ function m:_restoreState()
   local stateTable = hssettings.get(m.settingsKey)
 
   m.logger.d("Restoring state", hsinspect(stateTable))
+
   if stateTable ~= nil then
     local state = State.fromTable(stateTable)
     -- todo reconcile
+
+    local activityIdMapping = {}
+    
+    for activityId, activity in pairs(state.activities) do
+      local activityTemplate = m.activityTemplates[activity.typeId]
+      if activityTemplate ~= nil then
+        m.logger.d("Starting activity with typeId", activity.typeId)
+        local id = m.state:activityStarted(activity.typeId)
+
+        m.logger.d(" Renaming", id, activity.name)
+        m.state:activityRenamed(id, activity.name)
+
+        activityIdMapping[activityId] = id
+
+        for wid, _ in pairs(activity.windowIds) do
+          local win = hswindow(wid)
+          if win ~= nil then
+            m.logger.d(" Recovering window", wid)
+            m.state:windowMoved(wid, id)
+          end
+        end
+
+        m.logger.d("Done with activity has windows", id, hsinspect(m.state:getWindowsByActivityId(id)))
+      end
+    end
+
+    local allSpaces = hsspaces.spacesForScreen("primary")
+
+    m.logger.d(" Reconciling current spaces:", allSpaces)
+    m.logger.d(" With space state:", hsinspect(state.spaces))
+
+    for i, spaceId in ipairs(allSpaces) do
+        m.state:spaceAdded(spaceId, i)
+    end
+
+    for spaceId, space in pairs(state.spaces) do
+        m.logger.d("Reconciling space", spaceId, hsinspect(space))
+        local targetSpaceId = nil
+
+        if hs.fnutils.contains( allSpaces, spaceId ) then
+          m.logger.d(" Current space matches previous space, using it.")
+          targetSpaceId = spaceId
+        else
+          m.logger.d(" Searching for space by index instead: ", space.index, hsinspect(m.state.spaces))
+          for newSpaceId, newSpace in pairs(m.state.spaces) do
+            if newSpace.index == space.index then
+              m.logger.d(" Current space matches previous space by index, using it.")
+              targetSpaceId = newSpaceId
+            end
+          end
+        end
+        
+        if targetSpaceId == nil then
+          targetSpaceId = m:_createNewSpace()
+          m.logger.d(" Did not find matching space. Created space has id", targetSpaceId)
+        end
+
+        m.logger.d("Moving all activities to target space", hsinspect(space.activityIds), targetSpaceId)
+        for activityId, _ in pairs( space.activityIds ) do
+          local aid = activityIdMapping[activityId]
+          m:moveActivityToSpace(aid, targetSpaceId)
+        end
+    end
   end
+end
+
+function m:_getAllSpaces()
+  local screenId = hsscreen.primaryScreen():getUUID()
+  return hsspaces.allSpaces()[screenId]
+end
+
+function m:_createNewSpace()
+  local screenId = hsscreen.primaryScreen():getUUID()
+  hsspaces.addSpaceToScreen(screenId)
+  local spaces = hsspaces.allSpaces()[screenId]
+  space = spaces[#spaces]
+  m.state:spaceAdded(space, #spaces)
+  return space
 end
 
 function m:_getDefaultSpace()

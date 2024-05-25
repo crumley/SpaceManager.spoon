@@ -144,4 +144,34 @@ describe("State", function ()
             state2
         ) 
     end)
+
+    it("keys in table representation are all strings", function ()
+        local state1 = State.new() 
+
+        local a1 = state1:activityStarted(1)
+        local a12 = state1:activityStarted(2)
+        local a2 = state1:activityStarted(3)
+
+        state1:activityMoved( a1, 2 )
+        state1:windowMoved( 1, a1 )
+        state1:windowMoved( 2, a1 )
+        state1:windowMoved( 3, a12 )
+        state1:windowMoved( 4, a2 )
+
+        function assertStringKeys(t) 
+            if (type(t) ~= "table") then
+                return t
+            end
+
+            for k, v in pairs(t) do
+                assert.are.equal(type(k), "string")
+                assertStringKeys(v)
+            end
+        end
+
+        local t = state1:toTable()
+        assertStringKeys(t)
+    end)
+
+    
 end)

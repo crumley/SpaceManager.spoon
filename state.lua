@@ -36,13 +36,11 @@ function State.fromTable(tableState)
     if tableState.version == 1 then
         local state = State.new()
 
-        for k, v in pairs(tableState.activities) do
-            state.activities[tonumber(k)] = v
-            state._lastActivityIndex = math.max(v.id, state._lastActivityIndex)
-        end
+        state.activities = tableKeysToNumber(tableState.activities)
+        state.spaces = tableKeysToNumber(tableState.spaces)
 
-        for k, v in pairs(tableState.spaces) do
-            state.spaces[tonumber(k)] = v
+        for k, v in pairs(state.activities) do
+            state._lastActivityIndex = math.max(v.id, state._lastActivityIndex)
         end
 
         return state
@@ -62,13 +60,39 @@ function State:toTable()
 end
 
 function tableKeysToString(t)
-    if (type(elem) ~= "table") then
+    if (type(t) ~= "table") then
         return t
     end
 
     local ret = {}
     for k, v in pairs(t) do
-        ret[tostring(k)] = tableKeysToString(v)
+        if type(k) == "string" then
+            ret[k] = tableKeysToString(v)
+        else
+            ret[tostring(k)] = tableKeysToString(v)
+        end
+    end
+    return ret
+end
+
+function tableKeysToNumber(t)
+    if (type(t) ~= "table") then
+        return t
+    end
+
+    local ret = {}
+    for k, v in pairs(t) do
+        if type(k) == "number" then
+            ret[k] = tableKeysToNumber(v)
+        else
+            numberKey = tonumber(k)
+            if numberKey ~= nil then
+                ret[numberKey] = tableKeysToNumber(v)
+            else
+                ret[k] = tableKeysToNumber(v)
+            end
+        end
+
     end
     return ret
 end
@@ -176,8 +200,12 @@ function State:spaceRemoved(spaceId)
 end
 
 function State:_getOrCreateSpace(spaceId)
-    local space = Space.new(spaceId, nil)
-    self.spaces[spaceId] = space
+    local space = self.spaces[spaceId]
+    if space == nill then
+        space = Space.new(spaceId, nil)
+        self.spaces[spaceId] = space
+    end
+    
     return space
 end
 
