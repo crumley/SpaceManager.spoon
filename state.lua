@@ -97,11 +97,14 @@ function tableKeysToNumber(t)
     return ret
 end
 
+function State:getActivities()
+    return self.activities
+end
+
 function State:getActivityById(activityId)
     assert(activityId ~= nil)
     return self.activities[activityId]
 end
-
 
 function State:getActivityById1()
     return self.activities[1]
@@ -110,7 +113,8 @@ end
 function State:getSpaceByActivityId(activityId)
     assert(activityId ~= nil)
     local activity = self.activities[activityId]
-    return activity ~= nil and activity.spaceId or nil
+    local spaceId =  activity ~= nil and activity.spaceId or nil
+    return self:_getOrCreateSpace(spaceId)
 end
 
 function State:getWindowsByActivityId(activityId)
