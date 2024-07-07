@@ -1,7 +1,29 @@
+local hsspaces = require("hs.spaces")
+
 local Menu = {}
 
-function Menu.generateChoices(templates, state)
+function Menu.generateChoices(templates, currentActivityId, state)
     local choices = {}
+
+    local activities = state:getActivities()
+
+    for activityId, activity in pairs(activities) do
+        if activity.spaceId == hsspaces.focusedSpace() then
+            table.insert(choices, {
+                action = "stop",
+                activityId = activityId,
+                text = "Stop: " .. activity.name,
+                subText = "Stop the activity with ID " .. activityId .. " in the current space"
+            })
+        else
+            table.insert(choices, {
+              action = "jump",
+              activityId = activityId,
+              text = "Goto: " .. activity.name,
+              subText = "Goto the activity with ID " .. activityId
+            })
+        end
+    end
 
     for templateId, template in pairs(templates) do
         table.insert(choices, {

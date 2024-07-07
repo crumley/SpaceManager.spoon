@@ -58,7 +58,12 @@ local actions = {
 
   jump = function (choice)
     local activityId = choice["activityId"]
-    -- TODO
+    local spaceId = m.state:getSpaceByActivityId(activityId).id
+    if spaceId then
+      hsspaces.gotoSpace(spaceId)
+    else
+      m.logger.e("No space found for activityId: ", activityId)
+    end
   end,
 
   closeAll = function ()
@@ -115,7 +120,9 @@ function m:start()
 end
 
 function m:showMenu()
-  m.chooser:choices(Menu.generateChoices(m.activityTemplates, m.state))
+  local spaceInfo = m:_spaceInfo()
+  local currentActivityId = spaceInfo.primaryActivity ~= nil and spaceInfo.primaryActivity.id or nil
+  m.chooser:choices(Menu.generateChoices(m.activityTemplates, currentActivityId, m.state))
   m.chooser:show()
 end
 
@@ -158,12 +165,10 @@ end
 
 function m:jumpToActivityId(activityId)
   local space = m.state:getSpaceByActivityId(activityId)
-  if space == nil then
-    space = m:_getDefaultSpace()
-  end
+  local spaceId = space ~= nil and space.id or m:_getDefaultSpace()
 
-  if space ~= hsspaces.focusedSpace() then
-    hsspaces.gotoSpace(space)
+  if spaceId ~= hsspaces.focusedSpace() then
+    hsspaces.gotoSpace(spaceId)
   end
 end
 
@@ -185,9 +190,17 @@ function m:stopActivity(activityId, keepSpace)
 
   if not keepSpace then
     local space = m.state:getSpaceByActivityId(activityId)
+    m.logger.d('Attemping to remove space', hsinspect(space))
     if space ~= nil then
-      hsspaces.gotoSpace(defaultSpace)
-      hsspaces.removeSpace(activityRecord.space)
+      m.logger.d('Removing space', space.id)
+      local activitiesInSpace = m.state:getActivitiesBySpaceId(space.id)
+      if #activitiesInSpace == 1 and activitiesInSpace[1].id == activityId then
+        if hsspaces.focusedSpace() == space.id then
+          hsspaces.gotoSpace(defaultSpace)
+        end
+        hsspaces.removeSpace(space.id)
+        m.state:spaceRemoved(space.id)
+      end
     end
   end
 
