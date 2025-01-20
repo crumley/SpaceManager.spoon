@@ -1,10 +1,25 @@
 --- === SpaceManager ===
 ---
 ---
+local hslogger = require("hs.logger")
+local hschooser = require("hs.chooser")
+local hsapplication = require("hs.application")
+local hssettings = require("hs.settings")
+local hsspaces = require("hs.spaces")
+local hsinspect = require("hs.inspect")
+local hswindow = require("hs.window")
+local hscanvas = require("hs.canvas")
+local hsdrawing = require("hs.drawing")
+local hslayout = require("hs.layout")
+local hsscreen = require("hs.screen")
+local hstimer = require("hs.timer")
+local hsfnutils = require("hs.fnutils")
+local hseventtap = require("hs.eventtap")
+local hsosascript = require("hs.osascript")
+local hsnotify = require("hs.notify")
 
-local logger = require("hs.logger")
-local chooser = require("hs.chooser")
-local application = require("hs.application")
+local State = dofile(hs.spoons.resourcePath("state.lua"))
+local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
 
 local m = {}
 m.__index = m
@@ -16,510 +31,487 @@ m.author = "crumley@gmail.com"
 m.license = "MIT"
 m.homepage = "https://github.com/Hammerspoon/Spoons"
 
-m.logger = logger.new('SpaceManager', 'debug')
+m.logger = hslogger.new('SpaceManager', 'debug')
 
 -- Settings
 
-m.settingsKey = m.name .. ".spaceRecordsBySpaceId"
+m.settingsKey = m.name .. ".state"
 
 -- Hattip: https://apple.stackexchange.com/questions/419028/disable-the-dock-in-all-but-one-desktop-space-only
 m.dockOnPrimaryOnly = false
 m.desktopLozenge = false
 
 -- Configuration
-m.activities = {}
+m.activityTemplates = {}
 
 local actions = {
-  start = function (activityId)
-    m:startActivity(activityId)
-  end,
+    start = function(choice)
+        local activityTemplateId = choice["activityTemplateId"]
+        m:startActivityFromTemplate(activityTemplateId)
+    end,
 
-  stop = function (activityId)
-    m:stopActivity(activityId)
-  end,
+    stop = function(choice)
+        local activityId = choice["activityId"]
+        m:stopActivity(activityId)
+    end,
 
-  jump = function (activityId)
-    hs.spaces.gotoSpace(m.activityRecordsByActivityId[activityId].space)
-  end,
+    jump = function(choice)
+        local activityId = choice["activityId"]
+        local spaceId = m.state:getSpaceByActivityId(activityId).id
+        if spaceId then
+            hsspaces.gotoSpace(spaceId)
+        else
+            m.logger.e("No space found for activityId: ", activityId)
+        end
+    end,
 
-  closeAll = function (x)
-    -- Do the thing
-    m:closeAll()
-  end,
+    closeAll = function()
+        m:closeAll()
+    end,
+
+    reset = function()
+        m:reset()
+    end,
+
+    cleanup = function()
+        m:cleanup()
+    end
 }
 
 function m:init()
-  m.logger.d('init')
+    m.logger.d('init')
 
-  -- State
-  m.state = {
-    spaceToActivity = {},
-    spaceRecordsBySpaceId = {},
-    activityRecordsByActivityId = {},
-    activeRecordIdIndex = 0,
-    activityRecords = {},
-    spaceRecords = {}
-  }
+    m.state = State.new()
 
-  m.chooser = chooser.new(function (choice)
-    if choice then
-      local actionName = choice["action"]
-      if actionName ~= nil then
-        m.logger.d('Select action', actionName)
-        actions[actionName](choice["activityId"])
-        return
-      end
-    end
-  end)
+    m.chooser = hschooser.new(function(choice)
+        if choice then
+            local actionName = choice["action"]
+            if actionName ~= nil then
+                m.logger.d('Select action', actionName)
+                actions[actionName](choice)
+                return
+            end
+        end
+    end)
 end
 
 function m:start()
-  for id, activity in pairs(m.activities) do
-    activity.id = id
-  end
+    m.logger.d("start: allSpaces: ", hsinspect(hsspaces.spacesForScreen("primary")))
 
-  if m.dockOnPrimaryOnly then
-    local w = hs.spaces.watcher.new(function (s)
-      m:_onSpaceChanged(true)
+    for id, template in pairs(m.activityTemplates) do
+        template.id = id
+    end
+
+    if m.dockOnPrimaryOnly then
+        local w = hsspaces.watcher.new(function(s)
+            m:_onSpaceChanged(true)
+        end)
+        w.start(w)
+        m:_onSpaceChanged(true)
+    end
+
+    if m.desktopLozenge then
+        m.canvas = m:_createCanvas()
+        m.canvas:show()
+    end
+
+    pcall(function()
+        m:_restoreState()
     end)
-    w.start(w)
-    m:_onSpaceChanged(true)
-  end
 
-  if m.desktopLozenge then
-    local screen = hs.screen.primaryScreen()
-    local res = screen:fullFrame()
-    m.canvas = hs.canvas.new({
-      x = 20,
-      y = res.h - 18,
-      w = 500,
-      h = 18
-    })
-    m.canvas:behavior(hs.canvas.windowBehaviors.canJoinAllSpaces)
-    m.canvas:level(hs.canvas.windowLevels.desktopIcon)
-    m.canvas[1] = {
-      type = "rectangle",
-      action = "fill",
-      fillColor = { color = hs.drawing.color.black, alpha = 0.5 },
-      roundedRectRadii = { xRadius = 5, yRadius = 5 },
-    }
-    m.canvas[2] = {
-      id = "cal_title",
-      type = "text",
-      text = m:spaceInfoText(),
-      textFont = "Courier",
-      textSize = 16,
-      textColor = hs.drawing.color.osx_green,
-      textAlignment = "left",
-    }
-    m.canvas:show()
-  end
+    for id, template in pairs(m.activityTemplates) do
+        if template.permanent and #m.state:getActivitiesByTemplateId(id) == 0 then
+            m:startActivityFromTemplate(id)
+        end
+    end
 
-  m:_loadState()
-  m:_reconcileState()
 end
 
 function m:show()
-  m.chooser:choices(m:_generateChoices())
-  m.chooser:show()
+    m:showMenu()
 end
 
-function m:_resetState()
-  m.spaceRecordsBySpaceId = {}
-  hs.settings.set(m.settingsKey, {})
+function m:showMenu()
+    local spaceInfo = m:_spaceInfo()
+    local currentActivityId = spaceInfo.primaryActivity ~= nil and spaceInfo.primaryActivity.id or nil
+    m.chooser:choices(Menu.generateChoices(m.activityTemplates, currentActivityId, m.state))
+    m.chooser:show()
 end
 
-function m:_saveState()
-  m.canvas[2].text = m:spaceInfoText()
+function m:startActivityFromTemplate(templateId, windowObjs)
+    local template = m.activityTemplates[templateId]
+    m.logger.d('startActivity template:', template)
 
-  local state = {
-    version = 1,
-    spaceRecordsBySpaceId = {},
-  }
+    local activityId = m.state:activityStarted(templateId)
 
-  for k, v in pairs(m.spaceRecordsBySpaceId) do
-    state.spaceRecordsBySpaceId[tostring(k)] = v
-  end
-
-  state.activityRecords = m.activityRecords
-  state.spaceRecords = m.spaceRecords
-
-  m.logger.d("Saving state", hs.inspect(state))
-
-  hs.settings.set(m.settingsKey, state)
-end
-
-function m:_loadState()
-  local maxActivityRecordIndex = m.activeRecordIdIndex
-
-  local state = hs.settings.get(m.settingsKey)
-  if state ~= nil then
-    m.logger.i("Loading state", hs.inspect(state))
-
-    if state.version ~= nil then
-      if state.version == 1 then
-        for k, spaceRecord in pairs(state.spaceRecordsBySpaceId) do
-          -- TODO validate state
-          m.spaceRecordsBySpaceId[tonumber(k)] = spaceRecord
-          for activityId, activityRecord in pairs(spaceRecord.activityRecordsByActivityId) do
-            maxActivityRecordIndex = activityRecord.id ~= nil and math.max(activityRecord.id, maxActivityRecordIndex) or
-                maxActivityRecordIndex
-            m.activityRecordsByActivityId[activityId] = activityRecord
-          end
+    -- If the activity was seeded with windows, record them
+    if windowObjs ~= nil and #windowObjs > 0 then
+        for _, window in ipairs(windowObjs) do
+            local wid = window:id()
+            m.state:windowMoved(wid, activityId)
         end
-      end
     end
-  else
-    m.logger.i("Saved state did not have a version, refusing to honor.")
-  end
 
-  m.activeRecordIdIndex = maxActivityRecordIndex
+    m:moveAppsToActivity(template["apps"], activityId)
+
+    local space = m:_getDefaultSpace()
+    if template["space"] then
+        space = m:_createNewSpace()
+    end
+
+    m:moveActivityToSpace(activityId, space)
+    hsspaces.gotoSpace(space)
+
+    if template["layout"] then
+        hslayout.apply(template["layout"])
+    end
+
+    m:_saveState()
 end
 
-function m:_reconcileState()
-  -- TODO: This is very broken!
-  -- TODO BUG: Validate if the space index is maintained after moving the space or if its an index
-  -- TODO validate activity records (windows, spaces, etc) creating spaces and migrating as needed.
-  -- for id, activity in pairs(m.activities) do
-  --   if activity.permanent and m.activityRecordsByActivityId[activity.id] == nil then
-  --     m:startActivity(id)
-  --   end
-  -- end
-end
+function m:jumpToActivityId(activityId)
+    local space = m.state:getSpaceByActivityId(activityId)
+    local spaceId = space ~= nil and space.id or m:_getDefaultSpace()
 
-function m:moveActivityToSpace(activityRecord, space)
-  activityRecord.space = space
-  local spaceRecord = m:getSpaceRecord(space)
-
-  table.insert(spaceRecord.activityRecords, activityRecord)
-  spaceRecord.activityRecordsByActivityId[activityRecord.activityId] = activityRecord
-  m.activityRecordsByActivityId[activityRecord.activityId] = activityRecord
-
-  for _, wid in ipairs(activityRecord.windowIds) do
-    local w = hs.window(wid)
-    if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, space)
+    if spaceId ~= hsspaces.focusedSpace() then
+        hsspaces.gotoSpace(spaceId)
     end
-  end
-end
-
-function m:startActivity(activityId, windows)
-  local activity = m.activities[activityId]
-  m.logger.d('startActivity', activity)
-
-  local activityRecord = m:_createActivityRecord(activity)
-  if activity["setup"] ~= nil then
-    activity["setup"](activityRecord)
-  end
-
-  -- If the activity was seeded with windows, record them
-  if windows ~= nil and #windows > 0 then
-    for _, window in ipairs(windows) do
-      table.insert(activityRecord.windowIds, window:id())
-    end
-  end
-
-  local space = m:getDefaultSpace()
-  if activity["space"] then
-    local screenId = hs.screen.primaryScreen():getUUID()
-    hs.spaces.addSpaceToScreen(screenId)
-    local spaces = hs.spaces.allSpaces()[screenId]
-    space = spaces[#spaces]
-  end
-
-  m:moveActivityToSpace(activityRecord, space)
-  hs.spaces.gotoSpace(space)
-
-  if activity["layout"] then
-    hs.layout.apply(activity["layout"])
-  end
-
-  m:_saveState()
 end
 
 function m:stopActivity(activityId, keepSpace)
-  m.logger.d('stopActivity', activityId)
+    m.logger.d('stopActivity', activityId)
 
-  local activityRecord = m.activityRecordsByActivityId[activityId]
+    -- TODO
+    -- TODO: close windows that are "owned" by the activity, move the others...
 
-  if activityRecord == nil then
-    return
-  end
+    local windowIds = m.state:getWindowsByActivityId(activityId)
 
-  m.activityRecordsByActivityId[activityId] = nil
-
-  -- TODO: close windows that are "owned" by the activity, move the others...
-
-  local defaultSpace = m:getDefaultSpace()
-  for _, wid in ipairs(activityRecord.windowIds) do
-    local w = hs.window(wid)
-    if w ~= nil then
-      hs.spaces.moveWindowToSpace(w, defaultSpace)
+    local defaultSpace = m:_getDefaultSpace()
+    for wid, _ in ipairs(windowIds) do
+        local w = hswindow(wid)
+        if w ~= nil then
+            hsspaces.moveWindowToSpace(w, defaultSpace)
+        end
     end
-  end
 
-  local spaceRecord = m.spaceRecordsBySpaceId[activityRecord.space]
-  spaceRecord.activityRecordsByActivityId[activityId] = nil
-  if next(spaceRecord.activityRecordsByActivityId) == nil then
-    m.spaceRecordsBySpaceId[activityRecord.space] = nil
-  end
-
-  if not keepSpace then
-    hs.spaces.gotoSpace(defaultSpace)
-    hs.spaces.removeSpace(activityRecord.space)
-  end
-
-  m:_saveState()
-end
-
-function m:isStarted(activityId)
-  return m.activityRecordsByActivityId[activityId] ~= nil
-end
-
-function m:_generateStopableChoices()
-  local choices = {}
-
-  for _, activityRecord in pairs(m.activityRecords) do
-    table.insert(choices,
-      {
-        action = "stop",
-        activityRecordId = activityRecord.id,
-        text = "Stop: " .. activityRecord.name,
-        subText = ""
-      }
-    )
-  end
-
-  return choices
-end
-
-function m:_generateChoices()
-  local choices = {}
-
-  local spaceInfo = m:spaceInfo()
-  if spaceInfo.activity ~= nil and not spaceInfo.activity.permanent then
-    table.insert(choices,
-      {
-        action = "stop",
-        activityId = spaceInfo.activity.id,
-        text = "Stop: " .. m.activities[spaceInfo.activity.id].text,
-        subText = ""
-      }
-    )
-  end
-
-  for activityId in pairs(m.activityRecordsByActivityId) do
-    local activity = m.activities[activityId]
-    local isCurrent = spaceInfo.activity ~= nil and spaceInfo.activity.id == activityId
-    if not isCurrent then
-      table.insert(choices, {
-        action = "jump",
-        activityId = activityId,
-        text = "Goto: " .. activity["text"],
-        subText = activity["subText"]
-      })
+    if not keepSpace then
+        local space = m.state:getSpaceByActivityId(activityId)
+        m.logger.d('Attemping to remove space', hsinspect(space))
+        if space ~= nil then
+            m.logger.d('Removing space', space.id)
+            local activitiesInSpace = m.state:getActivitiesBySpaceId(space.id)
+            if #activitiesInSpace == 1 and activitiesInSpace[1].id == activityId then
+                if hsspaces.focusedSpace() == space.id then
+                    hsspaces.gotoSpace(defaultSpace)
+                end
+                hsspaces.removeSpace(space.id)
+                m.state:spaceRemoved(space.id)
+            end
+        end
     end
-  end
 
-  for activityId, activity in pairs(m.activities) do
-    local isStarted = m:isStarted(activityId)
-    local isCurrent = spaceInfo.activity ~= nil and spaceInfo.activity.id == activityId
-    if not isCurrent and not isStarted then
-      table.insert(choices, {
-        action = "start",
-        activityId = activityId,
-        text = "Start: " .. activity["text"],
-        subText = activity["subText"]
-      })
+    m.state:activityStopped(activityId)
+
+    m:_saveState()
+end
+
+function m:moveActivityToSpace(activityId, space)
+    local windows = m.state:getWindowsByActivityId(activityId)
+    m.logger.d('Moving Activity to space', activityId, space, hsinspect(windows))
+    m.state:activityMoved(activityId, space)
+    for wid, _ in pairs(windows) do
+        local w = hswindow(wid)
+        m.logger.d('  Moving activity window', wid, w, activityId)
+        if w ~= nil then
+            hsspaces.moveWindowToSpace(w, space)
+        end
     end
-  end
-
-  table.insert(choices,
-    {
-      action = "closeAll",
-      text = "Close All",
-      subText = "Stop all open activities and remove spaces."
-    }
-  )
-
-  return choices
-end
-
-function m:getDefaultSpace()
-  -- First space is the default space (for now)
-  local screenId = hs.screen.primaryScreen():getUUID()
-  return hs.spaces.allSpaces()[screenId][1]
-end
-
-function m:isPrimarySpace()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
-  local currentSpaceId = hs.spaces.focusedSpace()
-  return firstSpaceId == currentSpaceId
-end
-
-function m:spaceInfoText()
-  local info = m:spaceInfo()
-  local spaceName = "(Unmanaged)"
-  if info.isPrimary then
-    spaceName = "Primary"
-  elseif info.spaceRecord ~= nil and #info.spaceRecord.activityRecords > 0 then
-    spaceName = info.spaceRecord.activityRecords[1].name
-  elseif info.activity then
-    spaceName = info.activity.text
-  end
-  return string.format(" %s (%d/%d)", spaceName, info.currentIndex, info.count)
-end
-
-function m:spaceInfo()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local allSpaces = hs.spaces.allSpaces()[screenId]
-  local firstSpaceId = allSpaces[1]
-  local currentSpaceId = hs.spaces.focusedSpace()
-  local spaceRecord = m.spaceRecordsBySpaceId[currentSpaceId]
-  local activityId = spaceRecord and next(spaceRecord.activityRecordsByActivityId, nil) or nil
-  local activity = activityId and m.activities[activityId] or nil
-
-  return {
-    count = #allSpaces,
-    isPrimary = firstSpaceId == currentSpaceId,
-    currentIndex = hs.fnutils.indexOf(allSpaces, currentSpaceId),
-    activity = activity,
-    spaceRecord = spaceRecord,
-  }
 end
 
 function m:closeAll()
-  local screenId = hs.screen.primaryScreen():getUUID()
-  local firstSpaceId = hs.spaces.allSpaces()[screenId][1]
+    local screenId = hsscreen.primaryScreen():getUUID()
+    local firstSpaceId = hsspaces.allSpaces()[screenId][1]
 
-  if not m:isPrimarySpace() then
-    hs.spaces.gotoSpace(firstSpaceId)
-  end
+    if not m:_isPrimarySpace() then
+        hsspaces.gotoSpace(firstSpaceId)
+    end
 
-  for activityId in pairs(m.activities) do
-    m:stopActivity(activityId, true)
-  end
+    for activityId, _ in pairs(m.state.activities) do
+        m:stopActivity(activityId, true)
+    end
 
-  -- TODO: Clean up activities
-  -- Save state
-  -- Update canvas
+    -- TODO: Clean up activities
+    -- Save state
+    -- Update canvas
 
-  hs.timer.doAfter(2, function ()
-    hs.fnutils.ieach(hs.spaces.allSpaces()[screenId], function (s)
-      if s ~= firstSpaceId then
-        r = hs.spaces.removeSpace(s, false)
-      end
+    hstimer.doAfter(2, function()
+        hsfnutils.ieach(hsspaces.allSpaces()[screenId], function(s)
+            if s ~= firstSpaceId then
+                r = hsspaces.removeSpace(s, false)
+            end
+        end)
+        hsspaces.closeMissionControl()
     end)
-    hs.spaces.closeMissionControl()
-  end)
 
-  m:_resetState()
+    m:reset()
 end
 
--- function m:clearCurrentSpace()
---   local screenId = hs.screen.primaryScreen():getUUID()
---   local targetSpaceId = hs.spaces.allSpaces()[screenId][1]
---   local sourceSpaceId = hs.spaces.focusedSpace()
+function m:moveAppsToActivity(appHints, activityId)
+    for _, hint in ipairs(appHints) do
+        if hint ~= nil and type(hint.getWindows) == "function" then
+            local windows = hint:getWindows()
+            for _, window in ipairs(windows) do
+                m.state:windowMoved(window:id(), activityId)
+            end
+        end
+    end
+end
 
---   local windows = hs.spaces.windowsForSpace(sourceSpaceId)
+function m:cleanup()
+    for activityId, activity in pairs(self.state:getActivities()) do
+        local windows = self.state:getWindowsByActivityId(activityId)
+        local space = self.state:getSpaceByActivityId(activityId)
 
---   hs.fnutils.each(windows, function(w)
---     hs.spaces.moveWindowToSpace(w, targetSpaceId)
---   end)
--- end
+        if space then
+            for windowId, _ in pairs(windows) do
+                local window = hswindow(windowId)
+                if window and window:isVisible() then
+                    hsspaces.moveWindowToSpace(window, space.id)
+                end
+            end
+        end
+        m:moveAppsToActivity(m.activityTemplates[activity.typeId]["apps"], activityId)
+    end
 
-function m:toggleDock()
-  hs.eventtap.keyStroke({ "cmd", "alt" }, "d")
+    return nil
+end
+
+function m:reset()
+    m.state = State.new()
+    m:_saveState()
+    m:cleanup()
+end
+
+function m:_createCanvas()
+    local screen = hsscreen.primaryScreen()
+    local res = screen:fullFrame()
+
+    local canvas = hscanvas.new({
+        x = 20,
+        y = res.h - 18,
+        w = 500,
+        h = 18
+    })
+    canvas:behavior(hscanvas.windowBehaviors.canJoinAllSpaces)
+    canvas:level(hscanvas.windowLevels.desktopIcon)
+
+    canvas[1] = {
+        type = "rectangle",
+        action = "fill",
+        fillColor = {
+            color = hsdrawing.color.black,
+            alpha = 0.5
+        },
+        roundedRectRadii = {
+            xRadius = 5,
+            yRadius = 5
+        }
+    }
+
+    canvas[2] = {
+        id = "cal_title",
+        type = "text",
+        text = m:_spaceInfoText(),
+        textFont = "Courier",
+        textSize = 16,
+        textColor = hsdrawing.color.osx_green,
+        textAlignment = "left"
+    }
+
+    return canvas
+end
+
+function m:_saveState()
+    m.canvas[2].text = m:_spaceInfoText()
+
+    local stateTable = m.state:toTable()
+
+    m.logger.d("Saving state", hsinspect(stateTable))
+
+    hssettings.set(m.settingsKey, stateTable)
+end
+
+function m:_restoreState()
+    local stateTable = hssettings.get(m.settingsKey)
+
+    m.logger.d("Restoring state", hsinspect(stateTable))
+
+    if stateTable ~= nil then
+        local state = State.fromTable(stateTable)
+        -- todo reconcile
+
+        local activityIdMapping = {}
+
+        for activityId, activity in pairs(state.activities) do
+            local activityTemplate = m.activityTemplates[activity.typeId]
+            if activityTemplate ~= nil then
+                m.logger.d("Starting activity with typeId", activity.typeId)
+                local id = m.state:activityStarted(activity.typeId)
+
+                m.logger.d(" Renaming", id, activity.name)
+                m.state:activityRenamed(id, activity.name)
+
+                activityIdMapping[activityId] = id
+
+                for wid, _ in pairs(activity.windowIds) do
+                    local win = hswindow(wid)
+                    if win ~= nil then
+                        m.logger.d(" Recovering window", wid)
+                        m.state:windowMoved(wid, id)
+                    end
+                end
+
+                m.logger.d("Done with activity has windows", id, hsinspect(m.state:getWindowsByActivityId(id)))
+            end
+        end
+
+        local allSpaces = hsspaces.spacesForScreen("primary")
+
+        m.logger.d(" Reconciling current spaces:", allSpaces)
+        m.logger.d(" With space state:", hsinspect(state.spaces))
+
+        for i, spaceId in ipairs(allSpaces) do
+            m.state:spaceAdded(spaceId, i)
+        end
+
+        for spaceId, space in pairs(state.spaces) do
+            m.logger.d("Reconciling space", spaceId, hsinspect(space))
+            local targetSpaceId = nil
+
+            if hs.fnutils.contains(allSpaces, spaceId) then
+                m.logger.d(" Current space matches previous space, using it.")
+                targetSpaceId = spaceId
+            else
+                m.logger.d(" Searching for space by index instead: ", space.index, hsinspect(m.state.spaces))
+                for newSpaceId, newSpace in pairs(m.state.spaces) do
+                    if newSpace.index == space.index then
+                        m.logger.d(" Current space matches previous space by index, using it.")
+                        targetSpaceId = newSpaceId
+                    end
+                end
+            end
+
+            if targetSpaceId == nil then
+                targetSpaceId = m:_createNewSpace()
+                m.logger.d(" Did not find matching space. Created space has id", targetSpaceId)
+            end
+
+            m.logger.d("Moving all activities to target space", hsinspect(space.activityIds), targetSpaceId)
+            for activityId, _ in pairs(space.activityIds) do
+                local aid = activityIdMapping[activityId]
+                m:moveActivityToSpace(aid, targetSpaceId)
+            end
+        end
+    end
+end
+
+function m:_getAllSpaces()
+    local screenId = hsscreen.primaryScreen():getUUID()
+    return hsspaces.allSpaces()[screenId]
+end
+
+function m:_createNewSpace()
+    local screenId = hsscreen.primaryScreen():getUUID()
+    hsspaces.addSpaceToScreen(screenId)
+    local spaces = hsspaces.allSpaces()[screenId]
+    space = spaces[#spaces]
+    m.state:spaceAdded(space, #spaces)
+    return space
+end
+
+function m:_getDefaultSpace()
+    -- First space is the default space (for now)
+    local screenId = hsscreen.primaryScreen():getUUID()
+    return hsspaces.allSpaces()[screenId][1]
+end
+
+function m:_isPrimarySpace()
+    local screenId = hsscreen.primaryScreen():getUUID()
+    local firstSpaceId = hsspaces.allSpaces()[screenId][1]
+    local currentSpaceId = hsspaces.focusedSpace()
+    return firstSpaceId == currentSpaceId
+end
+
+function m:_spaceInfoText()
+    local info = m:_spaceInfo()
+    local spaceName = "(Unmanaged)"
+    if info.isPrimary then
+        spaceName = "Primary"
+    elseif info.primaryActivity ~= nil then
+        spaceName = info.primaryActivity.name
+    end
+    return string.format(" %s (%d/%d)", spaceName, info.currentIndex, info.count)
+end
+
+function m:_spaceInfo()
+    local screenId = hsscreen.primaryScreen():getUUID()
+    local allSpaces = hsspaces.allSpaces()[screenId]
+    local firstSpaceId = allSpaces[1]
+    local currentSpaceId = hsspaces.focusedSpace()
+
+    local activities = m.state:getActivitiesBySpaceId(currentSpaceId)
+    local activity = activities ~= nil and #activities > 0 and activities[1] or nil
+
+    return {
+        count = #allSpaces,
+        isPrimary = firstSpaceId == currentSpaceId,
+        currentIndex = hsfnutils.indexOf(allSpaces, currentSpaceId),
+        primaryActivity = activity
+    }
+end
+
+function m:_toggleDock()
+    hs.eventtap.keyStroke({"cmd", "alt"}, "d")
 end
 
 function m:_isDockHidden()
-  local asCommand = "tell application \"System Events\" to return autohide of dock preferences"
-  local ok, isDockHidden = hs.osascript.applescript(asCommand)
+    local asCommand = "tell application \"System Events\" to return autohide of dock preferences"
+    local ok, isDockHidden = hsosascript.applescript(asCommand)
 
-  if not ok then
-    local msg = "An error occurred getting the value of autohide for the Dock."
-    hs.notify.new({ title = "Hammerspoon", informativeText = msg }):send()
-  end
+    if not ok then
+        local msg = "An error occurred getting the value of autohide for the Dock."
+        hsnotify.new({
+            title = "Hammerspoon",
+            informativeText = msg
+        }):send()
+    end
 
-  return isDockHidden
+    return isDockHidden
 end
 
 function m:_onSpaceChanged(checkTwice)
-  local isDockHidden = m:_isDockHidden()
+    local isDockHidden = m:_isDockHidden()
 
-  if m.dockOnPrimaryOnly then
-    if m:isPrimarySpace() and isDockHidden then
-      m:toggleDock()
+    if m.dockOnPrimaryOnly then
+        if m:_isPrimarySpace() and isDockHidden then
+            m:_toggleDock()
+        end
+
+        if not m:_isPrimarySpace() and not isDockHidden then
+            m:_toggleDock()
+        end
+
+        -- Check once more after spaces settle...
+        if checkTwice then
+            hstimer.doAfter(1, function()
+                self:_onSpaceChanged(false)
+            end)
+        end
     end
 
-    if not m:isPrimarySpace() and not isDockHidden then
-      m:toggleDock()
+    if m.desktopLozenge and m.canvas then
+        m.canvas[2].text = m:_spaceInfoText()
     end
-
-    -- Check once more after spaces settle...
-    if checkTwice then
-      hs.timer.doAfter(1, function ()
-        self:_onSpaceChanged(false)
-      end)
-    end
-  end
-
-  if m.desktopLozenge and m.canvas then
-    m.canvas[2].text = m:spaceInfoText()
-  end
-end
-
--- State manipulation
-
-function _internalStateToPersistedState(state)
-  return {
-    version = 0
-  }
-end
-
-function m:_persistedStateToInternal(state)
-
-end
-
--- Data structures + State
-
-function m:_createActivityRecord(activity)
-  local windowIds = {}
-
-  for _, hint in ipairs(activity["apps"]) do
-    local app = application(hint)
-    if app ~= nil then
-      local window = app:focusedWindow()
-      table.insert(windowIds, window:id())
-    end
-  end
-
-  local activityRecord = {
-    name = string.format("%s: %i", activity.text, #m.activityRecords),
-    activityId = activity.id,
-    windowIds = windowIds,
-  }
-  table.insert(m.activityRecords, activityRecord)
-
-  return activityRecord
-end
-
-function m:getSpaceRecord(spaceId)
-  if m.spaceRecordsBySpaceId[spaceId] then
-    return m.spaceRecordsBySpaceId[spaceId]
-  end
-
-  local spaceRecord = {
-    spaceId = spaceId,
-    activityRecordsByActivityId = {},
-    activityRecords = {}
-  }
-
-  table.insert(m.spaceRecords, spaceRecord)
-
-  m.spaceRecordsBySpaceId[spaceId] = spaceRecord
-  return spaceRecord
 end
 
 return m

@@ -1,6 +1,11 @@
-# template.spoon
+# SpaceManager.spoon
 
-A template for a spoon project
+## Useful
+
+- https://github.com/Olivine-Labs/lua-style-guide
+- watchman-make -p '**/*.lua'  --run "busted"
+- luarocks install busted penlight
+- require 'pl.pretty'.dump(space)
 
 # Installation
 
