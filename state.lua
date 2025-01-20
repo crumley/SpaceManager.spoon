@@ -1,7 +1,9 @@
 local Activity = {}
 function Activity.new(id, typeId, name)
     local activity = {}
-    setmetatable(activity, { __index = Activity })
+    setmetatable(activity, {
+        __index = Activity
+    })
     activity.id = id
     activity.name = name or typeId
     activity.typeId = typeId
@@ -13,7 +15,9 @@ end
 local Space = {}
 function Space.new(spaceId, index)
     local space = {}
-    setmetatable(space, { __index = Space })
+    setmetatable(space, {
+        __index = Space
+    })
     space.id = spaceId
     space.index = index
     space.activityIds = {}
@@ -24,7 +28,9 @@ local State = {}
 
 function State.new()
     local state = {}
-    setmetatable(state, { __index = State })
+    setmetatable(state, {
+        __index = State
+    })
     state.activities = {}
     state.spaces = {}
     state.version = 1
@@ -53,7 +59,7 @@ function State:toTable()
     local ret = {
         activities = tableKeysToString(self.activities),
         spaces = tableKeysToString(self.spaces),
-        version = self.version,
+        version = self.version
     }
 
     return ret
@@ -106,14 +112,23 @@ function State:getActivityById(activityId)
     return self.activities[activityId]
 end
 
-function State:getActivityById1()
-    return self.activities[1]
+function State:getActivitiesByTemplateId(typeId)
+    assert(typeId ~= nil)
+
+    local activities = {}
+    for id, activity in pairs(self.activities) do
+        if activity.typeId == typeId then
+            table.insert(activities, activity)
+        end
+    end
+
+    return activities
 end
 
 function State:getSpaceByActivityId(activityId)
     assert(activityId ~= nil)
     local activity = self.activities[activityId]
-    local spaceId =  activity ~= nil and activity.spaceId or nil
+    local spaceId = activity ~= nil and activity.spaceId or nil
     return self:_getOrCreateSpace(spaceId)
 end
 
@@ -209,7 +224,7 @@ function State:_getOrCreateSpace(spaceId)
         space = Space.new(spaceId, nil)
         self.spaces[spaceId] = space
     end
-    
+
     return space
 end
 
