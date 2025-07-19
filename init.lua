@@ -43,6 +43,23 @@ m.desktopLozenge = false
 
 -- Configuration
 m.activityTemplates = {}
+m.activityTemplatesLookup = {}
+
+-- Helper function to iterate over activity templates in order
+function m:orderedActivityTemplates()
+    -- activityTemplates is now already an ordered array
+    return self.activityTemplates
+end
+
+-- Helper function to convert ordered array to lookup table
+function m:_buildActivityTemplatesLookup()
+    self.activityTemplatesLookup = {}
+    for _, activity in ipairs(self.activityTemplates) do
+        if activity.id then
+            self.activityTemplatesLookup[activity.id] = activity
+        end
+    end
+end
 
 local actions = {
     start = function(choice)
@@ -98,8 +115,14 @@ end
 function m:start()
     m.logger.d("start: allSpaces: ", hsinspect(hsspaces.spacesForScreen("primary")))
 
-    for id, template in pairs(m.activityTemplates) do
-        template.id = id
+    -- Build lookup table for ID-based access
+    m:_buildActivityTemplatesLookup()
+
+    -- Set the id field for each template (if not already set)
+    for _, activity in ipairs(m.activityTemplates) do
+        if not activity.id then
+            m.logger.e("Activity template missing id field:", hsinspect(activity))
+        end
     end
 
     if m.dockOnPrimaryOnly then
@@ -119,12 +142,11 @@ function m:start()
         m:_restoreState()
     end)
 
-    for id, template in pairs(m.activityTemplates) do
-        if template.permanent and #m.state:getActivitiesByTemplateId(id) == 0 then
-            m:startActivityFromTemplate(id)
+    for _, activity in ipairs(m.activityTemplates) do
+        if activity.permanent and #m.state:getActivitiesByTemplateId(activity.id) == 0 then
+            m:startActivityFromTemplate(activity.id)
         end
     end
-
 end
 
 function m:show()
@@ -134,12 +156,13 @@ end
 function m:showMenu()
     local spaceInfo = m:_spaceInfo()
     local currentActivityId = spaceInfo.primaryActivity ~= nil and spaceInfo.primaryActivity.id or nil
-    m.chooser:choices(Menu.generateChoices(m.activityTemplates, currentActivityId, m.state))
+    m.chooser:choices(Menu.generateChoices(m.activityTemplatesLookup, currentActivityId, m.state,
+        m:orderedActivityTemplates()))
     m.chooser:show()
 end
 
 function m:startActivityFromTemplate(templateId, windowObjs)
-    local template = m.activityTemplates[templateId]
+    local template = m.activityTemplatesLookup[templateId]
     m.logger.d('startActivity template:', template)
 
     local activityId = m.state:activityStarted(templateId)
@@ -280,7 +303,7 @@ function m:cleanup()
                 end
             end
         end
-        m:moveAppsToActivity(m.activityTemplates[activity.typeId]["apps"], activityId)
+        m:moveAppsToActivity(m.activityTemplatesLookup[activity.typeId]["apps"], activityId)
     end
 
     return nil
@@ -353,7 +376,7 @@ function m:_restoreState()
         local activityIdMapping = {}
 
         for activityId, activity in pairs(state.activities) do
-            local activityTemplate = m.activityTemplates[activity.typeId]
+            local activityTemplate = m.activityTemplatesLookup[activity.typeId]
             if activityTemplate ~= nil then
                 m.logger.d("Starting activity with typeId", activity.typeId)
                 local id = m.state:activityStarted(activity.typeId)
