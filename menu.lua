@@ -28,21 +28,41 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
     -- Use ordered templates if provided, otherwise fall back to pairs
     if orderedTemplates then
         for _, activity in ipairs(orderedTemplates) do
-            table.insert(choices, {
-                action = "start",
-                activityTemplateId = activity.id,
-                text = "Start: " .. activity["text"],
-                subText = activity["subText"]
-            })
+            -- Check if this is a singleton activity that's already started
+            local isStarted = false
+            if activity.singleton then
+                local existingActivities = state:getActivitiesByTemplateId(activity.id)
+                isStarted = #existingActivities > 0
+            end
+
+            -- Only show start option if it's not a singleton or if it's not already started
+            if not isStarted then
+                table.insert(choices, {
+                    action = "start",
+                    activityTemplateId = activity.id,
+                    text = "Start: " .. activity["text"],
+                    subText = activity["subText"]
+                })
+            end
         end
     else
         for templateId, template in pairs(templates) do
-            table.insert(choices, {
-                action = "start",
-                activityTemplateId = templateId,
-                text = "Start: " .. template["text"],
-                subText = template["subText"]
-            })
+            -- Check if this is a singleton activity that's already started
+            local isStarted = false
+            if template.singleton then
+                local existingActivities = state:getActivitiesByTemplateId(templateId)
+                isStarted = #existingActivities > 0
+            end
+
+            -- Only show start option if it's not a singleton or if it's not already started
+            if not isStarted then
+                table.insert(choices, {
+                    action = "start",
+                    activityTemplateId = templateId,
+                    text = "Start: " .. template["text"],
+                    subText = template["subText"]
+                })
+            end
         end
     end
 
