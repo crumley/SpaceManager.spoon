@@ -1,12 +1,20 @@
 local hsspaces = require("hs.spaces")
+local hsscreen = require("hs.screen")
+local hsfnutils = require("hs.fnutils")
 
 local Menu = {}
 
 function Menu.generateChoices(templates, currentActivityId, state, orderedTemplates)
     local choices = {}
 
-    local activities = state:getActivities()
+    -- Get all spaces to calculate space indices
+    local screenId = hsscreen.primaryScreen():getUUID()
+    local allSpaces = hsspaces.allSpaces()[screenId]
 
+    local activities = state:getActivities()
+    local gotoItems = {}
+
+    -- First pass: collect current space activities and goto activities
     for activityId, activity in pairs(activities) do
         if activity.spaceId == hsspaces.focusedSpace() then
             table.insert(choices, {
@@ -15,14 +23,42 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
                 text = "Stop: " .. activity.name,
                 subText = "Stop the activity with ID " .. activityId .. " in the current space"
             })
+
+            -- Add rename option for non-singleton, non-permanent activities
+            local template = templates[activity.typeId]
+            if template and not template.singleton and not template.permanent then
+                table.insert(choices, {
+                    action = "rename",
+                    activityId = activityId,
+                    text = "Rename: " .. activity.name,
+                    subText = "Rename the current activity"
+                })
+            end
         else
-            table.insert(choices, {
+            -- Calculate space index for the activity
+            local spaceIndex = hsfnutils.indexOf(allSpaces, activity.spaceId)
+            local spaceInfo = spaceIndex and (" (" .. spaceIndex .. ")") or ""
+
+            table.insert(gotoItems, {
                 action = "jump",
                 activityId = activityId,
-                text = "Goto: " .. activity.name,
-                subText = "Goto the activity with ID " .. activityId
+                text = "Goto: " .. activity.name .. spaceInfo,
+                subText = "Goto the activity with ID " .. activityId,
+                spaceIndex = spaceIndex or 9999 -- Put items without space index at the end
             })
         end
+    end
+
+    -- Sort goto items by space index
+    table.sort(gotoItems, function(a, b)
+        return a.spaceIndex < b.spaceIndex
+    end)
+
+    -- Add sorted goto items to choices
+    for _, item in ipairs(gotoItems) do
+        -- Remove the spaceIndex field as it's only used for sorting
+        item.spaceIndex = nil
+        table.insert(choices, item)
     end
 
     -- Use ordered templates if provided, otherwise fall back to pairs

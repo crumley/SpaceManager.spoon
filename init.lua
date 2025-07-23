@@ -17,6 +17,7 @@ local hsfnutils = require("hs.fnutils")
 local hseventtap = require("hs.eventtap")
 local hsosascript = require("hs.osascript")
 local hsnotify = require("hs.notify")
+local hsdialog = require("hs.dialog")
 
 local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
@@ -80,6 +81,11 @@ local actions = {
         else
             m.logger.e("No space found for activityId: ", activityId)
         end
+    end,
+
+    rename = function(choice)
+        local activityId = choice["activityId"]
+        m:renameActivity(activityId)
     end,
 
     closeAll = function()
@@ -198,6 +204,41 @@ function m:jumpToActivityId(activityId)
 
     if spaceId ~= hsspaces.focusedSpace() then
         hsspaces.gotoSpace(spaceId)
+    end
+end
+
+function m:renameActivity(activityId)
+    local activity = m.state:getActivityById(activityId)
+    if not activity then
+        m.logger.e("Activity not found:", activityId)
+        return
+    end
+
+    local template = m.activityTemplatesLookup[activity.typeId]
+    if not template then
+        m.logger.e("Template not found for activity:", activity.typeId)
+        return
+    end
+
+    local templateName = template.text or template.name or activity.typeId
+
+    -- Extract current suffix from activity name (everything after ":")
+    local currentSuffix = ""
+    local colonPos = string.find(activity.name, ":")
+    if colonPos then
+        currentSuffix = string.sub(activity.name, colonPos + 2) -- +2 to skip ": "
+    end
+
+    -- Show text prompt for new suffix and auto-focus it
+    hs.focus()
+    local button, newSuffix = hsdialog.textPrompt("Rename Activity",
+        "Enter new description for " .. templateName .. ":", currentSuffix, "OK", "Cancel")
+
+    if button == "OK" and newSuffix and newSuffix ~= "" then
+        local newName = templateName .. ": " .. newSuffix
+        m.state:activityRenamed(activityId, newName)
+        m:_saveState()
+        m.logger.d("Renamed activity", activityId, "to", newName)
     end
 end
 
@@ -321,9 +362,9 @@ function m:_createCanvas()
 
     local canvas = hscanvas.new({
         x = 20,
-        y = res.h - 18,
+        y = res.h - 26,
         w = 500,
-        h = 18
+        h = 28
     })
     canvas:behavior(hscanvas.windowBehaviors.canJoinAllSpaces)
     canvas:level(hscanvas.windowLevels.desktopIcon)
@@ -346,7 +387,7 @@ function m:_createCanvas()
         type = "text",
         text = m:_spaceInfoText(),
         textFont = "Courier",
-        textSize = 16,
+        textSize = 24,
         textColor = hsdrawing.color.osx_green,
         textAlignment = "left"
     }
@@ -355,7 +396,9 @@ function m:_createCanvas()
 end
 
 function m:_saveState()
-    m.canvas[2].text = m:_spaceInfoText()
+    if m.desktopLozenge and m.canvas then
+        m.canvas[2].text = m:_spaceInfoText()
+    end
 
     local stateTable = m.state:toTable()
 
@@ -473,7 +516,9 @@ function m:_spaceInfoText()
     elseif info.primaryActivity ~= nil then
         spaceName = info.primaryActivity.name
     end
-    return string.format(" %s (%d/%d)", spaceName, info.currentIndex, info.count)
+    local currentIndex = info.currentIndex or 1
+    local count = info.count or 1
+    return string.format(" %s (%d/%d)", spaceName, currentIndex, count)
 end
 
 function m:_spaceInfo()
@@ -485,10 +530,12 @@ function m:_spaceInfo()
     local activities = m.state:getActivitiesBySpaceId(currentSpaceId)
     local activity = activities ~= nil and #activities > 0 and activities[1] or nil
 
+    local currentIndex = hsfnutils.indexOf(allSpaces, currentSpaceId) or 1
+
     return {
         count = #allSpaces,
         isPrimary = firstSpaceId == currentSpaceId,
-        currentIndex = hsfnutils.indexOf(allSpaces, currentSpaceId),
+        currentIndex = currentIndex,
         primaryActivity = activity
     }
 end
