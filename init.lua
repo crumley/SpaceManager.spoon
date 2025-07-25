@@ -88,6 +88,11 @@ local actions = {
         m:renameActivity(activityId)
     end,
 
+    assign = function(choice)
+        local activityTemplateId = choice["activityTemplateId"]
+        m:assignActivityToCurrentSpace(activityTemplateId)
+    end,
+
     closeAll = function()
         m:closeAll()
     end,
@@ -242,6 +247,31 @@ function m:renameActivity(activityId)
     end
 end
 
+function m:assignActivityToCurrentSpace(activityTemplateId)
+    local template = m.activityTemplatesLookup[activityTemplateId]
+    m.logger.d('assignActivityToCurrentSpace template:', template)
+
+    -- Create new activity from template
+    local activityId = m.state:activityStarted(activityTemplateId)
+
+    -- Move apps to the new activity
+    m:moveAppsToActivity(template["apps"], activityId)
+
+    -- Assign activity to current space (don't create new space or switch)
+    local currentSpace = hsspaces.focusedSpace()
+    m:moveActivityToSpace(activityId, currentSpace)
+
+    -- Apply layout if specified
+    if template["layout"] then
+        hslayout.apply(template["layout"])
+    end
+
+    m:_saveState()
+
+    -- Automatically open rename dialog for the new activity
+    m:renameActivity(activityId)
+end
+
 function m:stopActivity(activityId, keepSpace)
     m.logger.d('stopActivity', activityId)
 
@@ -363,7 +393,7 @@ function m:_createCanvas()
     local canvas = hscanvas.new({
         x = 20,
         y = res.h - 26,
-        w = 500,
+        w = 700,
         h = 28
     })
     canvas:behavior(hscanvas.windowBehaviors.canJoinAllSpaces)

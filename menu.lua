@@ -13,19 +13,27 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
 
     local activities = state:getActivities()
     local gotoItems = {}
+    local hasCurrentSpaceActivity = false
 
     -- First pass: collect current space activities and goto activities
     for activityId, activity in pairs(activities) do
         if activity.spaceId == hsspaces.focusedSpace() then
-            table.insert(choices, {
-                action = "stop",
-                activityId = activityId,
-                text = "Stop: " .. activity.name,
-                subText = "Stop the activity with ID " .. activityId .. " in the current space"
-            })
+            hasCurrentSpaceActivity = true
+
+            -- Get template to check if activity is permanent
+            local template = templates[activity.typeId]
+
+            -- Only add stop option for non-permanent activities
+            if template and not template.permanent then
+                table.insert(choices, {
+                    action = "stop",
+                    activityId = activityId,
+                    text = "Stop: " .. activity.name,
+                    subText = "Stop the activity with ID " .. activityId .. " in the current space"
+                })
+            end
 
             -- Add rename option for non-singleton, non-permanent activities
-            local template = templates[activity.typeId]
             if template and not template.singleton and not template.permanent then
                 table.insert(choices, {
                     action = "rename",
@@ -61,13 +69,45 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
         table.insert(choices, item)
     end
 
+    -- If current space is unmanaged (no activity assigned), offer assignment options
+    if not hasCurrentSpaceActivity then
+        -- Use ordered templates if provided, otherwise fall back to pairs
+        if orderedTemplates then
+            for _, activity in ipairs(orderedTemplates) do
+                -- Only offer assignment for non-singleton, non-permanent activities
+                if not activity.singleton and not activity.permanent then
+                    -- For non-singleton activities, always allow assignment (multiple instances allowed)
+                    table.insert(choices, {
+                        action = "assign",
+                        activityTemplateId = activity.text,
+                        text = "Assign: " .. activity["text"],
+                        subText = "Assign " .. activity["text"] .. " to this unmanaged space"
+                    })
+                end
+            end
+        else
+            for templateId, template in pairs(templates) do
+                -- Only offer assignment for non-singleton, non-permanent activities
+                if not template.singleton and not template.permanent then
+                    -- For non-singleton activities, always allow assignment (multiple instances allowed)
+                    table.insert(choices, {
+                        action = "assign",
+                        activityTemplateId = template.text,
+                        text = "Assign: " .. template["text"],
+                        subText = "Assign " .. template["text"] .. " to this unmanaged space"
+                    })
+                end
+            end
+        end
+    end
+
     -- Use ordered templates if provided, otherwise fall back to pairs
     if orderedTemplates then
         for _, activity in ipairs(orderedTemplates) do
             -- Check if this is a singleton activity that's already started
             local isStarted = false
             if activity.singleton then
-                local existingActivities = state:getActivitiesByTemplateId(activity.id)
+                local existingActivities = state:getActivitiesByTemplateId(activity.text)
                 isStarted = #existingActivities > 0
             end
 
@@ -75,7 +115,7 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
             if not isStarted then
                 table.insert(choices, {
                     action = "start",
-                    activityTemplateId = activity.id,
+                    activityTemplateId = activity.text,
                     text = "Start: " .. activity["text"],
                     subText = activity["subText"]
                 })
@@ -86,7 +126,7 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
             -- Check if this is a singleton activity that's already started
             local isStarted = false
             if template.singleton then
-                local existingActivities = state:getActivitiesByTemplateId(templateId)
+                local existingActivities = state:getActivitiesByTemplateId(template.text)
                 isStarted = #existingActivities > 0
             end
 
@@ -94,7 +134,7 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
             if not isStarted then
                 table.insert(choices, {
                     action = "start",
-                    activityTemplateId = templateId,
+                    activityTemplateId = template.text,
                     text = "Start: " .. template["text"],
                     subText = template["subText"]
                 })
@@ -102,11 +142,12 @@ function Menu.generateChoices(templates, currentActivityId, state, orderedTempla
         end
     end
 
-    table.insert(choices, {
-        action = "cleanup",
-        text = "Clean up",
-        subText = "Restore order in this world."
-    })
+    -- Cleanup currently doesn't do much due to hs apis not working...
+    -- table.insert(choices, {
+    --     action = "cleanup",
+    --     text = "Clean up",
+    --     subText = "Restore order in this world."
+    -- })
 
     table.insert(choices, {
         action = "closeAll",
