@@ -386,6 +386,136 @@ function m:reset()
     m:cleanup()
 end
 
+function m:_getSpaceColor(spaceIndex)
+    -- Vibrant graffiti and pastel color palette for 16 spaces
+    -- Each color is designed to be distinct and easily recognizable
+    local colors = {{
+        red = 1.0,
+        green = 0.2,
+        blue = 0.5,
+        alpha = 0.6
+    }, -- Hot Pink
+    {
+        red = 0.2,
+        green = 0.8,
+        blue = 1.0,
+        alpha = 0.6
+    }, -- Cyan
+    {
+        red = 1.0,
+        green = 0.8,
+        blue = 0.2,
+        alpha = 0.6
+    }, -- Golden Yellow
+    {
+        red = 0.5,
+        green = 1.0,
+        blue = 0.3,
+        alpha = 0.6
+    }, -- Lime Green
+    {
+        red = 0.8,
+        green = 0.3,
+        blue = 1.0,
+        alpha = 0.6
+    }, -- Purple
+    {
+        red = 1.0,
+        green = 0.5,
+        blue = 0.2,
+        alpha = 0.6
+    }, -- Orange
+    {
+        red = 0.3,
+        green = 1.0,
+        blue = 0.8,
+        alpha = 0.6
+    }, -- Turquoise
+    {
+        red = 1.0,
+        green = 0.4,
+        blue = 0.7,
+        alpha = 0.6
+    }, -- Pink
+    {
+        red = 0.6,
+        green = 0.8,
+        blue = 1.0,
+        alpha = 0.6
+    }, -- Sky Blue
+    {
+        red = 1.0,
+        green = 0.9,
+        blue = 0.4,
+        alpha = 0.6
+    }, -- Pale Yellow
+    {
+        red = 0.8,
+        green = 1.0,
+        blue = 0.6,
+        alpha = 0.6
+    }, -- Mint
+    {
+        red = 1.0,
+        green = 0.6,
+        blue = 0.3,
+        alpha = 0.6
+    }, -- Coral
+    {
+        red = 0.7,
+        green = 0.4,
+        blue = 1.0,
+        alpha = 0.6
+    }, -- Lavender
+    {
+        red = 0.4,
+        green = 1.0,
+        blue = 0.5,
+        alpha = 0.6
+    }, -- Spring Green
+    {
+        red = 1.0,
+        green = 0.3,
+        blue = 0.3,
+        alpha = 0.6
+    }, -- Red
+    {
+        red = 0.4,
+        green = 0.6,
+        blue = 1.0,
+        alpha = 0.6
+    } -- Periwinkle
+    }
+
+    -- Use modulo to wrap around if spaceIndex is > 16
+    local index = ((spaceIndex - 1) % 16) + 1
+    return colors[index]
+end
+
+function m:_getContrastingTextColor(backgroundColor)
+    -- Calculate relative luminance using the standard formula
+    -- Luminance = 0.299*R + 0.587*G + 0.114*B
+    local luminance = 0.299 * backgroundColor.red + 0.587 * backgroundColor.green + 0.114 * backgroundColor.blue
+
+    -- If background is light (high luminance), use dark text
+    -- If background is dark (low luminance), use light text
+    if luminance > 0.6 then
+        return {
+            red = 0.1,
+            green = 0.1,
+            blue = 0.1,
+            alpha = 1.0
+        } -- Near black
+    else
+        return {
+            red = 1.0,
+            green = 1.0,
+            blue = 1.0,
+            alpha = 1.0
+        } -- White
+    end
+end
+
 function m:_createCanvas()
     local screen = hsscreen.primaryScreen()
     local res = screen:fullFrame()
@@ -399,13 +529,16 @@ function m:_createCanvas()
     canvas:behavior(hscanvas.windowBehaviors.canJoinAllSpaces)
     canvas:level(hscanvas.windowLevels.desktopIcon)
 
+    -- Get current space info to determine color
+    local info = m:_spaceInfo()
+    local spaceIndex = info.currentIndex or 1
+    local spaceColor = m:_getSpaceColor(spaceIndex)
+    local textColor = m:_getContrastingTextColor(spaceColor)
+
     canvas[1] = {
         type = "rectangle",
         action = "fill",
-        fillColor = {
-            color = hsdrawing.color.black,
-            alpha = 0.5
-        },
+        fillColor = spaceColor,
         roundedRectRadii = {
             xRadius = 5,
             yRadius = 5
@@ -418,7 +551,7 @@ function m:_createCanvas()
         text = m:_spaceInfoText(),
         textFont = "Courier",
         textSize = 24,
-        textColor = hsdrawing.color.osx_green,
+        textColor = textColor,
         textAlignment = "left"
     }
 
@@ -427,7 +560,16 @@ end
 
 function m:_saveState()
     if m.desktopLozenge and m.canvas then
+        -- Update text
         m.canvas[2].text = m:_spaceInfoText()
+
+        -- Update background color and text color based on current space
+        local info = m:_spaceInfo()
+        local spaceIndex = info.currentIndex or 1
+        local spaceColor = m:_getSpaceColor(spaceIndex)
+        local textColor = m:_getContrastingTextColor(spaceColor)
+        m.canvas[1].fillColor = spaceColor
+        m.canvas[2].textColor = textColor
     end
 
     local stateTable = m.state:toTable()
@@ -610,7 +752,16 @@ function m:_onSpaceChanged(checkTwice)
     end
 
     if m.desktopLozenge and m.canvas then
+        -- Update text
         m.canvas[2].text = m:_spaceInfoText()
+
+        -- Update background color and text color based on current space
+        local info = m:_spaceInfo()
+        local spaceIndex = info.currentIndex or 1
+        local spaceColor = m:_getSpaceColor(spaceIndex)
+        local textColor = m:_getContrastingTextColor(spaceColor)
+        m.canvas[1].fillColor = spaceColor
+        m.canvas[2].textColor = textColor
     end
 end
 
