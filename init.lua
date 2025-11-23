@@ -244,6 +244,93 @@ function m:renameActivity(activityId)
         m.state:activityRenamed(activityId, newName)
         m:_saveState()
         m.logger.d("Renamed activity", activityId, "to", newName)
+
+        -- Rename Chrome windows on current space using UI Scripting for persistent names
+        local chrome = hsapplication.get("Google Chrome")
+        if chrome then
+            local currentSpace = hsspaces.focusedSpace()
+            local wins = chrome:allWindows()
+            local lastFocused = hswindow.focusedWindow()
+
+            -- 1. Collect all target windows first
+            local targetWindows = {}
+            for _, win in ipairs(wins) do
+                local winSpaces = hsspaces.windowSpaces(win)
+                if winSpaces and hsfnutils.contains(winSpaces, currentSpace) then
+                    table.insert(targetWindows, win)
+                end
+            end
+
+            -- 2. Recursive function to rename them sequentially
+            local function renameNext(index)
+                if index > #targetWindows then
+                    -- Done processing all windows
+                    if lastFocused then
+                        lastFocused:focus()
+                    end
+                    return
+                end
+
+                local win = targetWindows[index]
+                win:focus()
+
+                -- Give focus a moment to settle
+                hstimer.doAfter(0.2, function()
+                    local success = false
+
+                    -- Method 1: Try direct selectMenuItem (Hammerspoon wrapper)
+                    if chrome:selectMenuItem({"Window", "Name Window..."}) then
+                        success = true
+                    elseif chrome:selectMenuItem({"Window", "Name Window…"}) then
+                        success = true
+                    end
+
+                    -- Method 2: Low-level AppleScript if wrapper fails
+                    if not success then
+                        m.logger.d("Falling back to raw AppleScript for menu selection")
+                        local as = string.format([[
+                            tell application "System Events"
+                                tell process "Google Chrome"
+                                    set frontmost to true
+                                    click menu item "Name Window..." of menu "Window" of menu bar 1
+                                end tell
+                            end tell
+                        ]])
+                        local ok, _ = hsosascript.applescript(as)
+                        success = ok
+                    end
+
+                    if success then
+                        -- Wait for dialog to appear before typing
+                        hstimer.doAfter(0.5, function()
+                            -- Prefix with "Focus: " to make it stand out
+                            local prefixedName = "Focus: " .. newSuffix
+                            if #targetWindows > 1 then
+                                prefixedName = prefixedName .. " " .. index
+                            end
+
+                            hseventtap.keyStrokes(prefixedName)
+                            hstimer.doAfter(0.1, function()
+                                hseventtap.keyStroke({}, "return")
+
+                                -- Process next window after delay
+                                hstimer.doAfter(0.2, function()
+                                    renameNext(index + 1)
+                                end)
+                            end)
+                        end)
+                    else
+                        m.logger.w("Could not find 'Name Window...' menu item in Chrome")
+                        -- Proceed to next window anyway
+                        renameNext(index + 1)
+                    end
+                end)
+            end
+
+            if #targetWindows > 0 then
+                renameNext(1)
+            end
+        end
     end
 end
 
