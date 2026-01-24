@@ -47,6 +47,14 @@ local actions = {
 
     reset = function()
         m:reset()
+    end,
+
+    clearName = function()
+        m:clearCurrentSpaceName()
+    end,
+
+    gotoSpace = function(choice)
+        hsspaces.gotoSpace(choice.spaceId)
     end
 }
 
@@ -92,7 +100,14 @@ end
 
 function m:showMenu()
     local spaceInfo = m:_spaceInfo()
-    m.chooser:choices(Menu.generateChoices(spaceInfo.currentSpaceName))
+    local hasCustomName = (spaceInfo.currentSpaceName ~= spaceInfo.defaultName)
+    local allSpaces = m:_getSpacesForMenu()
+    m.chooser:choices(Menu.generateChoices(
+        spaceInfo.currentSpaceName,
+        hasCustomName,
+        allSpaces,
+        spaceInfo.currentSpaceId
+    ))
     m.chooser:show()
 end
 
@@ -220,6 +235,32 @@ end
 function m:reset()
     m.state = State.new()
     m:_saveState()
+end
+
+function m:clearCurrentSpaceName()
+    local spaceInfo = m:_spaceInfo()
+    m.state:spaceRenamed(spaceInfo.currentSpaceId, nil)
+    m:_saveState()
+end
+
+function m:_getSpacesForMenu()
+    local result = {}
+    local allSpaces = m:_getAllSpaces()
+    for index, spaceId in ipairs(allSpaces or {}) do
+        local spaceRecord = m.state:getSpaceById(spaceId)
+        local customName = spaceRecord and spaceRecord.name or nil
+        local configuredName = m.spaceConfig[index]
+        local defaultName = configuredName or "Space"
+        table.insert(result, {
+            spaceId = spaceId,
+            index = index,
+            name = customName,
+            defaultName = defaultName,
+            hasCustomName = (customName ~= nil),
+            hasConfiguredName = (configuredName ~= nil)
+        })
+    end
+    return result
 end
 
 function m:_getSpaceColor(spaceIndex)
