@@ -12,20 +12,24 @@ local hscanvas = require("hs.canvas")
 local hsscreen = require("hs.screen")
 local hstimer = require("hs.timer")
 local hsfnutils = require("hs.fnutils")
-local hseventtap = require("hs.eventtap")
 local hsosascript = require("hs.osascript")
 local hsnotify = require("hs.notify")
 local hsdialog = require("hs.dialog")
+local hsjson = require("hs.json")
+local hshost = require("hs.host")
+local hscaffeinate = require("hs.caffeinate")
+local hswindowfilter = require("hs.window.filter")
 
 local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
+local Chrome = dofile(hs.spoons.resourcePath("chrome.lua"))
 
 local m = {}
 m.__index = m
 
 -- Metadata
 m.name = "SpaceManager"
-m.version = "0.2"
+m.version = "0.3"
 m.author = "crumley@gmail.com"
 m.license = "MIT"
 m.homepage = "https://github.com/Hammerspoon/Spoons"
@@ -39,6 +43,23 @@ m.settingsKey = m.name .. ".state"
 m.dockOnPrimaryOnly = false
 m.desktopLozenge = false
 m.spaceConfig = {}
+
+-- Chrome windows carry their space's name (Window > Name Window..., set
+-- through Chrome's scripting `givenName`, see chrome.lua). Reconciled when a
+-- Chrome window appears, when the active space changes, on wake or unlock,
+-- and every chromeNamesInterval seconds -- a window dragged between spaces
+-- raises no event, so the timer is what eventually catches it.
+m.chromeWindowNames = false
+m.chromeNamesInterval = 60
+
+-- Once a day, open a fresh Chrome window named for the date on the space at
+-- dailyWindowSpaceIndex. It is only created while that space is showing or
+-- the machine has been idle for dailyWindowIdleSeconds, so it never lands in
+-- the middle of typing; otherwise the next tick tries again.
+m.dailyWindow = false
+m.dailyWindowSpaceIndex = 1
+m.dailyWindowDateFormat = "%Y-%m-%d"
+m.dailyWindowIdleSeconds = 60
 
 local actions = {
     rename = function(choice)
@@ -76,11 +97,11 @@ end
 function m:start()
     m.logger.d("start: allSpaces: ", hsinspect(hsspaces.spacesForScreen("primary")))
 
+    m.spaceWatcher = hsspaces.watcher.new(function(s)
+        m:_onSpaceChanged(true)
+    end)
+    m.spaceWatcher:start()
     if m.dockOnPrimaryOnly then
-        local w = hsspaces.watcher.new(function(s)
-            m:_onSpaceChanged(true)
-        end)
-        w.start(w)
         m:_onSpaceChanged(true)
     end
 
@@ -92,6 +113,10 @@ function m:start()
     pcall(function()
         m:_restoreState()
     end)
+
+    if m.chromeWindowNames or m.dailyWindow then
+        m:_startChromeNaming()
+    end
 end
 
 function m:show()
@@ -114,133 +139,243 @@ end
 function m:renameCurrentSpace()
     local spaceInfo = m:_spaceInfo()
     local currentSpaceId = spaceInfo.currentSpaceId
-    local currentSpaceName = spaceInfo.currentSpaceName
     local defaultName = spaceInfo.defaultName
+    local spaceRecord = m.state:getSpaceById(currentSpaceId)
+    local currentName = spaceRecord and spaceRecord.name or ""
 
-    -- Extract current suffix from space name (everything after ":")
-    local currentSuffix = ""
-    local colonPos = string.find(currentSpaceName, ":")
-    if colonPos then
-        currentSuffix = string.sub(currentSpaceName, colonPos + 2) -- +2 to skip ": "
-    end
-
-    -- Show text prompt for new suffix and auto-focus it
+    -- Show text prompt for the new name and auto-focus it
     hs.focus()
-    local button, newSuffix = hsdialog.textPrompt("Rename Space", "Enter description for " .. defaultName .. ":",
-        currentSuffix, "OK", "Cancel")
+    local button, newName = hsdialog.textPrompt("Rename Space",
+        string.format("Name for %s (space %d), empty to clear:", defaultName, spaceInfo.currentIndex),
+        currentName, "OK", "Cancel")
 
-    if button == "OK" and newSuffix then
-        local newName
-        if newSuffix == "" then
-            -- Empty suffix means revert to default name
+    if button == "OK" and newName then
+        if newName == "" then
             newName = nil
-        else
-            newName = defaultName .. ": " .. newSuffix
         end
-
         m.state:spaceRenamed(currentSpaceId, newName)
         m:_saveState()
         m.logger.d("Renamed space", currentSpaceId, "to", newName or defaultName)
-
-        -- Rename Chrome windows on current space using UI Scripting for persistent names
-        local chrome = hsapplication.get("Google Chrome")
-        if chrome then
-            local currentSpace = hsspaces.focusedSpace()
-            local wins = chrome:allWindows()
-            local lastFocused = hswindow.focusedWindow()
-
-            -- 1. Collect all target windows first
-            local targetWindows = {}
-            for _, win in ipairs(wins) do
-                local winSpaces = hsspaces.windowSpaces(win)
-                if winSpaces and hsfnutils.contains(winSpaces, currentSpace) then
-                    table.insert(targetWindows, win)
-                end
-            end
-
-            -- 2. Recursive function to rename them sequentially
-            local function renameNext(index)
-                if index > #targetWindows then
-                    -- Done processing all windows
-                    if lastFocused then
-                        lastFocused:focus()
-                    end
-                    return
-                end
-
-                local win = targetWindows[index]
-                win:focus()
-
-                -- Give focus a moment to settle
-                hstimer.doAfter(0.2, function()
-                    local success = false
-
-                    -- Method 1: Try direct selectMenuItem (Hammerspoon wrapper)
-                    if chrome:selectMenuItem({"Window", "Name Window..."}) then
-                        success = true
-                    elseif chrome:selectMenuItem({"Window", "Name Window…"}) then
-                        success = true
-                    end
-
-                    -- Method 2: Low-level AppleScript if wrapper fails
-                    if not success then
-                        m.logger.d("Falling back to raw AppleScript for menu selection")
-                        local as = string.format([[
-                            tell application "System Events"
-                                tell process "Google Chrome"
-                                    set frontmost to true
-                                    click menu item "Name Window..." of menu "Window" of menu bar 1
-                                end tell
-                            end tell
-                        ]])
-                        local ok, _ = hsosascript.applescript(as)
-                        success = ok
-                    end
-
-                    if success then
-                        -- Wait for dialog to appear before typing
-                        hstimer.doAfter(0.5, function()
-                            -- Prefix with "Focus: " to make it stand out
-                            local displayName = newName or defaultName
-                            local prefixedName = "Focus: " .. displayName
-                            if #targetWindows > 1 then
-                                prefixedName = prefixedName .. " " .. index
-                            end
-
-                            hseventtap.keyStrokes(prefixedName)
-                            hstimer.doAfter(0.1, function()
-                                hseventtap.keyStroke({}, "return")
-
-                                -- Process next window after delay
-                                hstimer.doAfter(0.2, function()
-                                    renameNext(index + 1)
-                                end)
-                            end)
-                        end)
-                    else
-                        m.logger.w("Could not find 'Name Window...' menu item in Chrome")
-                        -- Proceed to next window anyway
-                        renameNext(index + 1)
-                    end
-                end)
-            end
-
-            if #targetWindows > 0 then
-                renameNext(1)
-            end
-        end
+        m:_scheduleReconcile(0)
     end
 end
 
 function m:reset()
-    m.state = State.new()
+    -- Clear every custom name, retiring each so the Chrome windows wearing
+    -- one get cleared too.
+    for spaceId, space in pairs(m.state:getSpaces()) do
+        if space.name then
+            m.state:spaceRenamed(spaceId, nil)
+        end
+    end
     m:_saveState()
+    m:_scheduleReconcile(0)
 end
 
 function m:clearCurrentSpaceName()
     local spaceInfo = m:_spaceInfo()
     m.state:spaceRenamed(spaceInfo.currentSpaceId, nil)
     m:_saveState()
+    m:_scheduleReconcile(0)
+end
+
+-- Chrome window names ----------------------------------------------------
+
+local function jsString(str)
+    return '"' .. str:gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
+end
+
+function m:_chromeApp()
+    return hsapplication.get("Google Chrome")
+end
+
+-- Chrome's own view of its windows, via scripting: id, title, givenName,
+-- bounds {x, y, width, height}. nil when Chrome is not running or refuses.
+function m:_chromeScriptWindows()
+    if not m:_chromeApp() then
+        return nil
+    end
+    local ok, result = hsosascript.javascript([[
+        const c = Application("Google Chrome");
+        JSON.stringify(c.windows().map(w => ({
+            id: String(w.id()), title: w.title(), givenName: w.givenName(), bounds: w.bounds()
+        })));
+    ]])
+    if not ok then
+        m.logger.w("Could not list Chrome windows", hsinspect(result))
+        return nil
+    end
+    return hsjson.decode(result)
+end
+
+-- Hammerspoon's view of the same windows, with the spaces each is on.
+function m:_chromeHsWindows(app)
+    local wins = {}
+    for _, w in ipairs(app:allWindows()) do
+        local id = w:id()
+        if id and w:isStandard() then
+            local f = w:frame()
+            table.insert(wins, {
+                id = id,
+                title = w:title(),
+                frame = { x = f.x, y = f.y, w = f.w, h = f.h },
+                spaces = hsspaces.windowSpaces(w) or {},
+                window = w
+            })
+        end
+    end
+    return wins
+end
+
+function m:_setChromeWindowNames(namesById)
+    local ok, result = hsosascript.javascript(string.format([[
+        const names = %s;
+        const c = Application("Google Chrome");
+        c.windows().forEach(w => {
+            const n = names[String(w.id())];
+            if (n !== undefined) { w.givenName = n; }
+        });
+        true;
+    ]], hsjson.encode(namesById)))
+    if not ok then
+        m.logger.w("Could not set Chrome window names", hsinspect(result))
+    end
+end
+
+-- The name windows on each space should carry (spaceId -> name), and the set
+-- of names this spoon is allowed to overwrite.
+function m:_spaceNames()
+    local names = {}
+    local managed = m.state:knownNames()
+    for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
+        local record = m.state:getSpaceById(spaceId)
+        local configured = m.spaceConfig[index]
+        names[spaceId] = (record and record.name) or configured
+    end
+    for _, configured in pairs(m.spaceConfig) do
+        managed[configured] = true
+    end
+    return names, managed
+end
+
+function m:reconcileChromeWindows()
+    if not m.chromeWindowNames then
+        return
+    end
+    local app = m:_chromeApp()
+    local scripted = app and m:_chromeScriptWindows()
+    if not scripted then
+        return
+    end
+    local names, managed = m:_spaceNames()
+    local pairs_ = Chrome.matchWindows(scripted, m:_chromeHsWindows(app))
+    local changes = Chrome.plan(pairs_, names, managed)
+    if #changes == 0 then
+        return
+    end
+    local byId = {}
+    for _, change in ipairs(changes) do
+        byId[change.id] = change.name
+        m.logger.d("Chrome window", change.id, "->", change.name == "" and "(cleared)" or change.name)
+    end
+    m:_setChromeWindowNames(byId)
+end
+
+function m:ensureDailyWindow()
+    if not m.dailyWindow then
+        return
+    end
+    local today = os.date(m.dailyWindowDateFormat)
+    if m.state.lastDailyWindow == today then
+        return
+    end
+    local app = m:_chromeApp()
+    local scripted = app and m:_chromeScriptWindows()
+    if not scripted then
+        return
+    end
+    for _, w in ipairs(scripted) do
+        if w.givenName == today then
+            -- Chrome restored it, or Hammerspoon reloaded after making it
+            m:_recordDailyWindow(today)
+            return
+        end
+    end
+
+    local spaceId = (m:_getAllSpaces() or {})[m.dailyWindowSpaceIndex]
+    if not spaceId then
+        return
+    end
+    local onTargetSpace = hsspaces.focusedSpace() == spaceId
+    if not onTargetSpace and hshost.idleTime() < m.dailyWindowIdleSeconds then
+        return -- someone is busy elsewhere; a later tick will try again
+    end
+
+    local previous = hswindow.focusedWindow()
+    local ok, result = hsosascript.javascript(string.format([[
+        const c = Application("Google Chrome");
+        const w = c.Window().make();
+        w.givenName = %s;
+        JSON.stringify({ id: String(w.id()), title: w.title(), givenName: w.givenName(), bounds: w.bounds() });
+    ]], jsString(today)))
+    if not ok then
+        m.logger.w("Could not create the daily Chrome window", hsinspect(result))
+        return
+    end
+    local created = hsjson.decode(result)
+    m.logger.i("Created daily Chrome window", today)
+    m:_recordDailyWindow(today)
+
+    -- Send it home once it exists as a window, then give focus back to
+    -- whatever had it: the window is for later, not for now.
+    hstimer.doAfter(0.5, function()
+        local pairs_ = Chrome.matchWindows({ created }, m:_chromeHsWindows(app))
+        local win = pairs_[1] and pairs_[1].hs.window
+        if win and not hsfnutils.contains(hsspaces.windowSpaces(win) or {}, spaceId) then
+            hsspaces.moveWindowToSpace(win, spaceId)
+        end
+        if previous then
+            previous:focus()
+        end
+    end)
+end
+
+function m:_recordDailyWindow(today)
+    m.state.lastDailyWindow = today
+    m:_saveState()
+end
+
+function m:_tick()
+    m:ensureDailyWindow()
+    m:reconcileChromeWindows()
+end
+
+-- Coalesce bursts (a space switch plus the windows it reveals) into one pass.
+function m:_scheduleReconcile(delay)
+    if m.pendingTick then
+        m.pendingTick:stop()
+    end
+    m.pendingTick = hstimer.doAfter(delay, function()
+        m.pendingTick = nil
+        m:_tick()
+    end)
+end
+
+function m:_startChromeNaming()
+    m.chromeFilter = hswindowfilter.new("Google Chrome")
+    m.chromeFilter:subscribe(hswindowfilter.windowCreated, function()
+        m:_scheduleReconcile(1)
+    end)
+    m.wakeWatcher = hscaffeinate.watcher.new(function(event)
+        if event == hscaffeinate.watcher.systemDidWake or event == hscaffeinate.watcher.screensDidUnlock then
+            m:_scheduleReconcile(5)
+        end
+    end)
+    m.wakeWatcher:start()
+    m.tickTimer = hstimer.doEvery(m.chromeNamesInterval, function()
+        m:_tick()
+    end)
+    m:_scheduleReconcile(5)
 end
 
 function m:_getSpacesForMenu()
@@ -572,6 +707,10 @@ function m:_onSpaceChanged(checkTwice)
                 self:_onSpaceChanged(false)
             end)
         end
+    end
+
+    if checkTwice then
+        m:_scheduleReconcile(1)
     end
 
     if m.desktopLozenge and m.canvas then

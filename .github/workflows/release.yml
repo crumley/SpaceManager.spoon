@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Build project
         run: |
           zip -r ${{ github.event.repository.name }}.zip . -x ".git/*" ".github/* ${{ github.event.repository.name }}.zip"
