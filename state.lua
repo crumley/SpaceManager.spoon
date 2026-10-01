@@ -18,26 +18,36 @@ function State.new()
         __index = State
     })
     state.spaces = {}
-    state.version = 2
+    -- Names spaces used to carry: Chrome windows still wearing one of these
+    -- are ours to rename, so a space rename or clear follows through.
+    state.retiredNames = {}
+    -- The date (as named) of the last daily window created, so closing it
+    -- does not summon another one the same day.
+    state.lastDailyWindow = nil
+    state.version = 3
     return state
 end
 
 function State.fromTable(tableState)
-    if tableState.version == 2 then
+    if tableState.version == 3 or tableState.version == 2 then
         local state = State.new()
         state.spaces = tableKeysToNumber(tableState.spaces)
+        state.retiredNames = tableState.retiredNames or {}
+        state.lastDailyWindow = tableState.lastDailyWindow
         return state
     elseif tableState.version == 1 then
         -- Migration from old activity-based system: discard old state
         return State.new()
     end
-    
+
     return nil
 end
 
 function State:toTable()
     local ret = {
         spaces = tableKeysToString(self.spaces),
+        retiredNames = self.retiredNames,
+        lastDailyWindow = self.lastDailyWindow,
         version = self.version
     }
     return ret
@@ -69,7 +79,7 @@ function tableKeysToNumber(t)
         if type(k) == "number" then
             ret[k] = tableKeysToNumber(v)
         else
-            numberKey = tonumber(k)
+            local numberKey = tonumber(k)
             if numberKey ~= nil then
                 ret[numberKey] = tableKeysToNumber(v)
             else
@@ -108,12 +118,46 @@ function State:spaceMoved(spaceId, index)
 end
 
 function State:spaceRemoved(spaceId)
+    local space = self.spaces[spaceId]
+    if space then
+        self:_retire(space.name)
+    end
     self.spaces[spaceId] = nil
 end
 
+-- Rename a space; nil clears. The previous custom name is retired.
 function State:spaceRenamed(spaceId, name)
     local space = self:_getOrCreateSpace(spaceId)
+    if space.name ~= name then
+        self:_retire(space.name)
+    end
     space.name = name
+end
+
+-- Every custom space name, current and retired, as a set.
+function State:knownNames()
+    local names = {}
+    for _, space in pairs(self.spaces) do
+        if space.name then
+            names[space.name] = true
+        end
+    end
+    for _, name in ipairs(self.retiredNames) do
+        names[name] = true
+    end
+    return names
+end
+
+function State:_retire(name)
+    if name == nil or name == "" then
+        return
+    end
+    for _, existing in ipairs(self.retiredNames) do
+        if existing == name then
+            return
+        end
+    end
+    table.insert(self.retiredNames, name)
 end
 
 function State:_getOrCreateSpace(spaceId)

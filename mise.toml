@@ -1,0 +1,30 @@
+# SpaceManager.spoon toolchain + tasks (mise). One file pins the tool versions
+# AND defines the tasks, so local dev and CI run the same commands.
+#
+#   mise install       # provision the pinned toolchain (actionlint)
+#   mise run test      # unit tests for the pure modules, under plain lua
+#   mise run check     # the full no-writes gate -- exactly what CI runs
+#
+# Lua itself is not pinned here: Hammerspoon ships its own Lua 5.4, and the
+# modules under test are plain Lua that any 5.4+ interpreter runs. Locally
+# `brew install lua`; CI installs it from the OS package manager (see
+# .github/workflows/ci.yml). init.lua needs Hammerspoon and is checked by hand.
+
+[tools]
+actionlint = "1.7.12"
+
+[tasks.syntax]
+description = "Parse every Lua file"
+run = "for f in *.lua test/*.lua; do lua -e \"assert(loadfile('$f'))\" || exit 1; done"
+
+[tasks.test]
+description = "Run test/*_test.lua under plain lua"
+run = "lua test/run.lua"
+
+[tasks.lint-ci]
+description = "Lint the CI workflow"
+run = "actionlint"
+
+[tasks.check]
+description = "Everything CI runs: syntax, test, lint-ci"
+depends = ["syntax", "test", "lint-ci"]
