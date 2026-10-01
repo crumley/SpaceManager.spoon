@@ -125,4 +125,25 @@ function Chrome.plan(pairs_, spaceNames, managedNames)
     return changes
 end
 
+-- A cheap fingerprint of everything a pass depends on that can change
+-- without an event: which space each known Chrome window is on, and the name
+-- each space wants. Equal fingerprints mean the last settled pass still holds.
+--   spacesById:  hs window id -> list of space ids (empty once it is gone)
+--   spaceNames:  spaceId -> name, as for plan
+function Chrome.signature(spacesById, spaceNames)
+    local parts = {}
+    for id, spaces in pairs(spacesById) do
+        local s = {}
+        for i, spaceId in ipairs(spaces) do
+            s[i] = tostring(spaceId)
+        end
+        parts[#parts + 1] = "w" .. tostring(id) .. "@" .. table.concat(s, ",")
+    end
+    for spaceId, name in pairs(spaceNames) do
+        parts[#parts + 1] = "s" .. tostring(spaceId) .. "=" .. name
+    end
+    table.sort(parts)
+    return table.concat(parts, "\n")
+end
+
 return Chrome

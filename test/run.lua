@@ -74,6 +74,11 @@ assert = setmetatable({
             expect(deepEqual(expected, actual), ("expected %s, got %s"):format(dump(expected), dump(actual)))
         end
     },
+    are_not = {
+        equal = function(expected, actual)
+            expect(expected ~= actual, ("expected anything but %s"):format(dump(expected)))
+        end
+    },
     is_true = function(v) expect(v == true, "expected true, got " .. dump(v)) end,
     is_false = function(v) expect(v == false, "expected false, got " .. dump(v)) end,
     is_nil = function(v) expect(v == nil, "expected nil, got " .. dump(v)) end

@@ -130,3 +130,26 @@ describe("Chrome.isDateName", function()
         assert.is_false(Chrome.isDateName(nil))
     end)
 end)
+
+describe("Chrome.signature", function()
+    local names = { [3] = "Planning", [5] = "Taxes" }
+
+    it("does not depend on iteration order", function()
+        local a = Chrome.signature({ [1] = { 3 }, [2] = { 5 } }, names)
+        local b = Chrome.signature({ [2] = { 5 }, [1] = { 3 } }, { [5] = "Taxes", [3] = "Planning" })
+        assert.are.equal(a, b)
+    end)
+
+    it("changes when a window moves to another space", function()
+        assert.are_not.equal(Chrome.signature({ [1] = { 3 } }, names), Chrome.signature({ [1] = { 5 } }, names))
+    end)
+
+    it("changes when a window is gone", function()
+        assert.are_not.equal(Chrome.signature({ [1] = { 3 } }, names), Chrome.signature({ [1] = {} }, names))
+    end)
+
+    it("changes when a space is renamed", function()
+        assert.are_not.equal(Chrome.signature({ [1] = { 3 } }, names),
+            Chrome.signature({ [1] = { 3 } }, { [3] = "Plans", [5] = "Taxes" }))
+    end)
+end)

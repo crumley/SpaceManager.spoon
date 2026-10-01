@@ -51,6 +51,11 @@ m.spaceConfig = {}
 -- raises no event, so the timer is what eventually catches it.
 m.chromeWindowNames = false
 m.chromeNamesInterval = 60
+-- A timer tick skips the full pass (which asks Chrome about every window)
+-- while the windows last seen settled are still on the same spaces and the
+-- space names are unchanged. A full pass still runs at least this often, so a
+-- name changed by hand in Chrome is put back eventually.
+m.chromeNamesFullInterval = 600
 
 -- Once a day, open a fresh Chrome window named for the date on the space at
 -- dailyWindowSpaceIndex. It is only created while that space is showing or
@@ -195,10 +200,13 @@ function m:_chromeScriptWindows()
     if not m:_chromeApp() then
         return nil
     end
+    -- One Apple Event per property for all windows at once, not one per
+    -- window: the cost stays flat however many windows are open.
     local ok, result = hsosascript.javascript([[
-        const c = Application("Google Chrome");
-        JSON.stringify(c.windows().map(w => ({
-            id: String(w.id()), title: w.title(), givenName: w.givenName(), bounds: w.bounds()
+        const ws = Application("Google Chrome").windows;
+        const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds();
+        JSON.stringify(ids.map((id, i) => ({
+            id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i]
         })));
     ]])
     if not ok then
@@ -230,11 +238,8 @@ end
 function m:_setChromeWindowNames(namesById)
     local ok, result = hsosascript.javascript(string.format([[
         const names = %s;
-        const c = Application("Google Chrome");
-        c.windows().forEach(w => {
-            const n = names[String(w.id())];
-            if (n !== undefined) { w.givenName = n; }
-        });
+        const ws = Application("Google Chrome").windows;
+        Object.keys(names).forEach(id => { ws.byId(Number(id)).givenName = names[id]; });
         true;
     ]], hsjson.encode(namesById)))
     if not ok then
@@ -258,19 +263,49 @@ function m:_spaceNames()
     return names, managed
 end
 
-function m:reconcileChromeWindows()
+-- The fingerprint of the given hs window ids where they stand now. Only
+-- asks the window server which space each is on: nothing goes to Chrome.
+function m:_chromeSignature(ids, names)
+    local spacesById = {}
+    for _, id in ipairs(ids) do
+        spacesById[id] = hsspaces.windowSpaces(id) or {}
+    end
+    return Chrome.signature(spacesById, names)
+end
+
+-- force: run the full pass even if nothing looks changed. Events (a new
+-- window, a space switch, wake, a rename) force; the periodic timer does not.
+function m:reconcileChromeWindows(force)
     if not m.chromeWindowNames then
         return
     end
+    local settled = m.chromeSettled
+    local now = hstimer.secondsSinceEpoch()
+    if not force and settled and now - settled.at < m.chromeNamesFullInterval then
+        local names = m:_spaceNames()
+        if m:_chromeSignature(settled.ids, names) == settled.signature then
+            return
+        end
+    end
+    m.chromeSettled = nil
+
     local app = m:_chromeApp()
     local scripted = app and m:_chromeScriptWindows()
     if not scripted then
         return
     end
     local names, managed = m:_spaceNames()
-    local pairs_ = Chrome.matchWindows(scripted, m:_chromeHsWindows(app))
+    local hsWindows = m:_chromeHsWindows(app)
+    local pairs_ = Chrome.matchWindows(scripted, hsWindows)
     local changes = Chrome.plan(pairs_, names, managed)
     if #changes == 0 then
+        -- Nothing to do: remember where everything stood, so ticks can skip
+        -- until something moves. After renames, the next pass confirms them.
+        local ids = {}
+        for _, w in ipairs(hsWindows) do
+            table.insert(ids, w.id)
+        end
+        m.chromeSettled = { ids = ids, signature = m:_chromeSignature(ids, names), at = now }
         return
     end
     local byId = {}
@@ -345,9 +380,9 @@ function m:_recordDailyWindow(today)
     m:_saveState()
 end
 
-function m:_tick()
+function m:_tick(force)
     m:ensureDailyWindow()
-    m:reconcileChromeWindows()
+    m:reconcileChromeWindows(force)
 end
 
 -- Coalesce bursts (a space switch plus the windows it reveals) into one pass.
@@ -357,7 +392,7 @@ function m:_scheduleReconcile(delay)
     end
     m.pendingTick = hstimer.doAfter(delay, function()
         m.pendingTick = nil
-        m:_tick()
+        m:_tick(true)
     end)
 end
 
@@ -373,7 +408,7 @@ function m:_startChromeNaming()
     end)
     m.wakeWatcher:start()
     m.tickTimer = hstimer.doEvery(m.chromeNamesInterval, function()
-        m:_tick()
+        m:_tick(false)
     end)
     m:_scheduleReconcile(5)
 end
