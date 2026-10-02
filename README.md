@@ -10,20 +10,23 @@ Chrome windows named after the space they are on.
   custom name per space set through the menu (`show()`), and a desktop lozenge
   (`desktopLozenge`) that shows the current space's name and position.
 - **Dock on the first space only** (`dockOnPrimaryOnly`).
-- **Chrome window names** (`chromeWindowNames`). Every Chrome window carries
-  the name of the space it is on, set through Chrome's own `Window > Name
-  Window...` (its scripting `givenName`), so the name shows in the tab strip
-  and survives Chrome restarts. Names are reconciled when a Chrome window
-  appears, when the active space changes, on wake or unlock, and every
-  `chromeNamesInterval` seconds; a window dragged to another space picks up
-  that space's name on the next pass. Only names this spoon gave are ever
-  overwritten: a window you named yourself is left alone, and a window on an
-  unnamed space has its spoon-given name cleared.
+- **Chrome window names** (`chromeWindowNames`). An unnamed Chrome window
+  takes the position and name of the space it is on, led by a colored square
+  close to the space's color (`chromeWindowMarkers`) -- `🟥 01 - Today` -- set
+  through Chrome's own `Window > Name Window...` (its scripting `givenName`),
+  so the name shows in the tab strip and survives Chrome restarts. A second
+  window wanting a name already in use gets ` 2`, then ` 3`. A window that
+  has a name keeps it, whoever gave it and wherever it is dragged, until its
+  space is renamed: then every window on that space takes the new name (or
+  loses its name if the space's was cleared). Windows on an unnamed space are
+  left unnamed. Reconciled when a Chrome window appears, when the active space
+  changes, on wake or unlock, and every `chromeNamesInterval` seconds.
 - **A daily window** (`dailyWindow`). Once a day a fresh Chrome window named
   for the date (`dailyWindowDateFormat`) opens on the space at
-  `dailyWindowSpaceIndex`, only while that space is showing or the machine has
-  been idle for `dailyWindowIdleSeconds`. Closing it does not summon another;
-  its date name is never overwritten by the space's name.
+  `dailyWindowSpaceIndex` -- only while that space is showing, since Chrome
+  opens a new window on the current space and moving a window between spaces
+  is not reliable on current macOS. Closing it does not summon another; its
+  date name is never overwritten, even when its space is renamed.
 
 ## Install
 

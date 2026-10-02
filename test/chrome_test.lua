@@ -79,46 +79,92 @@ describe("Chrome.matchWindows", function()
     end)
 end)
 
-describe("Chrome.plan", function()
-    local names = { [1] = "Today", [3] = "Planning" }
-    local managed = { Today = true, Planning = true, Research = true }
+describe("Chrome.spaceWindowName", function()
+    it("prefixes the zero-padded space position", function()
+        assert.are.equal("01 - Today", Chrome.spaceWindowName(1, "Today"))
+        assert.are.equal("12 - Taxes", Chrome.spaceWindowName(12, "Taxes"))
+    end)
 
-    local function pair(givenName, spaceId)
-        return { chrome = { id = "c", givenName = givenName }, hs = { spaces = { spaceId } } }
+    it("leads with the marker when there is one", function()
+        assert.are.equal("🟥 01 - Today", Chrome.spaceWindowName(1, "Today", "🟥"))
+        assert.are.equal("01 - Today", Chrome.spaceWindowName(1, "Today", ""))
+        assert.is_nil(Chrome.spaceWindowName(1, nil, "🟥"))
+    end)
+
+    it("is nil for an unnamed space", function()
+        assert.is_nil(Chrome.spaceWindowName(3, nil))
+        assert.is_nil(Chrome.spaceWindowName(3, ""))
+    end)
+end)
+
+describe("Chrome.plan", function()
+    local names = { [1] = "01 - Today", [3] = "03 - Planning" }
+    local none = {}
+
+    local function pair(id, givenName, spaceId)
+        return { chrome = { id = id, givenName = givenName }, hs = { spaces = { spaceId } } }
     end
 
     it("names an unnamed window after its space", function()
-        local changes = Chrome.plan({ pair("", 3) }, names, managed)
-        assert.are.same({ { id = "c", name = "Planning" } }, changes)
+        local changes = Chrome.plan({ pair("10", "", 3) }, names, none)
+        assert.are.same({ { id = "10", name = "03 - Planning" } }, changes)
     end)
 
-    it("renames a window that moved to another named space", function()
-        local changes = Chrome.plan({ pair("Today", 3) }, names, managed)
-        assert.are.same({ { id = "c", name = "Planning" } }, changes)
+    it("suffixes later windows on the same space, oldest first", function()
+        local changes = Chrome.plan({ pair("12", "", 3), pair("9", "", 3), pair("10", "", 3) }, names, none)
+        assert.are.same({
+            { id = "9", name = "03 - Planning" },
+            { id = "10", name = "03 - Planning 2" },
+            { id = "12", name = "03 - Planning 3" },
+        }, changes)
     end)
 
-    it("clears a managed name on an unnamed space", function()
-        local changes = Chrome.plan({ pair("Research", 5) }, names, managed)
-        assert.are.same({ { id = "c", name = "" } }, changes)
+    it("takes the lowest suffix not already in use", function()
+        local changes = Chrome.plan({ pair("1", "03 - Planning 2", 3), pair("2", "", 3) }, names, none)
+        assert.are.same({ { id = "2", name = "03 - Planning" } }, changes)
     end)
 
-    it("leaves a person's own name alone", function()
-        assert.are.same({}, Chrome.plan({ pair("Taxes", 3) }, names, managed))
-        assert.are.same({}, Chrome.plan({ pair("Taxes", 5) }, names, managed))
+    it("avoids a name in use by a window on another space", function()
+        local changes = Chrome.plan({ pair("1", "03 - Planning", 1), pair("2", "", 3) }, names, none)
+        assert.are.same({ { id = "2", name = "03 - Planning 2" } }, changes)
     end)
 
-    it("leaves a dated daily window alone wherever it is", function()
-        assert.are.same({}, Chrome.plan({ pair("2026-09-30", 3) }, names, managed))
-        assert.are.same({}, Chrome.plan({ pair("2026-09-30", 5) }, names, managed))
+    it("avoids a name in use by a window it could not match", function()
+        local all = { { id = "1", givenName = "03 - Planning" }, { id = "2", givenName = "" } }
+        local changes = Chrome.plan({ pair("2", "", 3) }, names, none, all)
+        assert.are.same({ { id = "2", name = "03 - Planning 2" } }, changes)
     end)
 
-    it("does nothing when the name already matches", function()
-        assert.are.same({}, Chrome.plan({ pair("Planning", 3) }, names, managed))
-        assert.are.same({}, Chrome.plan({ pair("", 5) }, names, managed))
+    it("leaves a named window alone, even one moved from another space", function()
+        assert.are.same({}, Chrome.plan({ pair("1", "Taxes", 3) }, names, none))
+        assert.are.same({}, Chrome.plan({ pair("1", "01 - Today", 3) }, names, none))
+    end)
+
+    it("leaves windows on an unnamed space unnamed", function()
+        assert.are.same({}, Chrome.plan({ pair("1", "", 5) }, names, none))
+    end)
+
+    it("renames every window on a renamed space", function()
+        local changes = Chrome.plan({ pair("1", "Taxes", 3), pair("2", "03 - Plans", 3), pair("3", "Other", 1) },
+            names, { [3] = true })
+        assert.are.same({
+            { id = "1", name = "03 - Planning" },
+            { id = "2", name = "03 - Planning 2" },
+        }, changes)
+    end)
+
+    it("clears every window on a space whose name was cleared", function()
+        local changes = Chrome.plan({ pair("1", "05 - Research", 5), pair("2", "", 5) }, names, { [5] = true })
+        assert.are.same({ { id = "1", name = "" } }, changes)
+    end)
+
+    it("leaves a dated daily window alone, even on a renamed space", function()
+        assert.are.same({}, Chrome.plan({ pair("1", "2026-09-30", 3) }, names, none))
+        assert.are.same({}, Chrome.plan({ pair("1", "2026-09-30", 1) }, names, { [1] = true }))
     end)
 
     it("does nothing for a window on no known space", function()
-        assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, managed))
+        assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, none))
     end)
 end)
 
