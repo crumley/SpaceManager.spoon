@@ -101,13 +101,18 @@ function Chrome.matchWindows(chromeWindows, hsWindows, tolerance)
     return pairs_
 end
 
--- The name a space gives its Chrome windows: its position, zero-padded, then
--- its name -- "01 - Today". nil for a space with no name.
-function Chrome.spaceWindowName(index, name)
+-- The name a space gives its Chrome windows: an optional marker (a colored
+-- square standing for the space's color), its position, zero-padded, then its
+-- name -- "🟥 01 - Today". nil for a space with no name.
+function Chrome.spaceWindowName(index, name, marker)
     if name == nil or name == "" then
         return nil
     end
-    return string.format("%02d - %s", index, name)
+    local base = string.format("%02d - %s", index, name)
+    if marker == nil or marker == "" then
+        return base
+    end
+    return marker .. " " .. base
 end
 
 -- Chrome window ids are numbers in string form; order them as numbers so the

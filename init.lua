@@ -50,6 +50,9 @@ m.spaceConfig = {}
 -- wake or unlock, and every chromeNamesInterval seconds.
 m.chromeWindowNames = false
 m.chromeNamesInterval = 60
+-- Lead each name with a colored square close to the space's color (see
+-- _getSpaceMarker), so a window shows which space it belongs to at a glance.
+m.chromeWindowMarkers = true
 -- A timer tick skips the full pass (which asks Chrome about every window)
 -- while the windows last seen settled are still on the same spaces and the
 -- space names are unchanged. A full pass still runs at least this often.
@@ -257,7 +260,8 @@ function m:_spaceNames()
     for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
         local record = m.state:getSpaceById(spaceId)
         local configured = m.spaceConfig[index]
-        names[spaceId] = Chrome.spaceWindowName(index, (record and record.name) or configured)
+        local marker = m.chromeWindowMarkers and m:_getSpaceMarker(index) or nil
+        names[spaceId] = Chrome.spaceWindowName(index, (record and record.name) or configured, marker)
     end
     return names
 end
@@ -528,6 +532,30 @@ function m:_getSpaceColor(spaceIndex)
     -- Use modulo to wrap around if spaceIndex is > 16
     local index = ((spaceIndex - 1) % 16) + 1
     return colors[index]
+end
+
+-- The colored square emoji closest to each _getSpaceColor entry, same order.
+-- There are only nine squares, so some spaces share one.
+function m:_getSpaceMarker(spaceIndex)
+    local markers = {
+        "🟥", -- Hot Pink
+        "🟦", -- Cyan
+        "🟨", -- Golden Yellow
+        "🟩", -- Lime Green
+        "🟪", -- Purple
+        "🟧", -- Orange
+        "🟩", -- Turquoise
+        "🟪", -- Pink
+        "🟦", -- Sky Blue
+        "🟨", -- Pale Yellow
+        "🟩", -- Mint
+        "🟧", -- Coral
+        "🟪", -- Lavender
+        "🟩", -- Spring Green
+        "🟥", -- Red
+        "🟦", -- Periwinkle
+    }
+    return markers[((spaceIndex - 1) % #markers) + 1]
 end
 
 function m:_getContrastingTextColor(backgroundColor)

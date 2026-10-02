@@ -85,6 +85,12 @@ describe("Chrome.spaceWindowName", function()
         assert.are.equal("12 - Taxes", Chrome.spaceWindowName(12, "Taxes"))
     end)
 
+    it("leads with the marker when there is one", function()
+        assert.are.equal("🟥 01 - Today", Chrome.spaceWindowName(1, "Today", "🟥"))
+        assert.are.equal("01 - Today", Chrome.spaceWindowName(1, "Today", ""))
+        assert.is_nil(Chrome.spaceWindowName(1, nil, "🟥"))
+    end)
+
     it("is nil for an unnamed space", function()
         assert.is_nil(Chrome.spaceWindowName(3, nil))
         assert.is_nil(Chrome.spaceWindowName(3, ""))

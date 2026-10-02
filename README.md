@@ -11,7 +11,8 @@ Chrome windows named after the space they are on.
   (`desktopLozenge`) that shows the current space's name and position.
 - **Dock on the first space only** (`dockOnPrimaryOnly`).
 - **Chrome window names** (`chromeWindowNames`). An unnamed Chrome window
-  takes the position and name of the space it is on -- `01 - Today` -- set
+  takes the position and name of the space it is on, led by a colored square
+  close to the space's color (`chromeWindowMarkers`) -- `🟥 01 - Today` -- set
   through Chrome's own `Window > Name Window...` (its scripting `givenName`),
   so the name shows in the tab strip and survives Chrome restarts. A second
   window wanting a name already in use gets ` 2`, then ` 3`. A window that
