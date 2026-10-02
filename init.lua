@@ -46,6 +46,9 @@ m.settingsKey = m.name .. ".state"
 m.dockOnPrimaryOnly = false
 m.desktopLozenge = false
 m.spaceConfig = {}
+-- What spaceLabel calls a space with no name, so a label never stops at the
+-- number. "" leaves just the number.
+m.unnamedSpaceName = "<untitled>"
 
 -- An unnamed Chrome window takes its space's position and name, "01 - Today"
 -- (Window > Name Window..., set through Chrome's scripting `givenName`, see
@@ -280,14 +283,18 @@ function m:_setChromeWindowNames(namesById)
 end
 
 -- A short label for a space on the primary screen, for other spoons to show
--- next to a window: "🟥 01 - Today" for a named space, "🟦 02" for an unnamed
--- one (the marker only with chromeWindowMarkers). nil for a space it does not
--- know, such as one on another screen.
+-- next to a window: "🟥 01 - Today" for a named space, "🟦 02 - <untitled>"
+-- for an unnamed one (the marker only with chromeWindowMarkers). nil for a
+-- space it does not know, such as one on another screen. Chrome windows on an
+-- unnamed space stay unnamed; the placeholder is for labels only.
 function m:spaceLabel(spaceId)
     for index, id in ipairs(m:_getAllSpaces() or {}) do
         if id == spaceId then
             local record = m.state:getSpaceById(spaceId)
             local name = (record and record.name) or m.spaceConfig[index]
+            if name == nil or name == "" then
+                name = m.unnamedSpaceName
+            end
             local marker = m.chromeWindowMarkers and m:_getSpaceMarker(index) or nil
             return Chrome.spaceWindowName(index, name, marker) or
                 ((marker and marker .. " " or "") .. string.format("%02d", index))
@@ -815,7 +822,9 @@ end
 function m:_spaceInfoText()
     local info = m:_spaceInfo()
     local spaceName = info.currentSpaceName
-    if info.isPrimary and spaceName == info.defaultName then
+    -- "Primary" only stands in for a first space nobody named: a configured
+    -- name (spaceConfig) or a custom one is shown as is.
+    if info.isPrimary and spaceName == info.defaultName and m.spaceConfig[info.currentIndex] == nil then
         spaceName = "Primary"
     end
     local currentIndex = info.currentIndex or 1
