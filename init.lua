@@ -18,6 +18,10 @@ local hsdialog = require("hs.dialog")
 local hsjson = require("hs.json")
 local hscaffeinate = require("hs.caffeinate")
 local hswindowfilter = require("hs.window.filter")
+local hsurlevent = require("hs.urlevent")
+
+local CHROME_BUNDLE = "com.google.Chrome"
+local HAMMERSPOON_BUNDLE = "org.hammerspoon.Hammerspoon"
 
 local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
@@ -65,6 +69,16 @@ m.chromeNamesFullInterval = 600
 m.dailyWindow = false
 m.dailyWindowSpaceIndex = 1
 m.dailyWindowDateFormat = "%Y-%m-%d"
+
+-- Links clicked in other apps open in a Chrome window on the space showing,
+-- rather than in whichever window Chrome last used, which pulls the screen to
+-- that window's space. Hammerspoon has to be the default browser for this:
+-- with linkRouting on, start() asks macOS to make it so (macOS confirms the
+-- change once). A link that cannot be routed is handed to Chrome as usual.
+m.linkRouting = false
+-- With no Chrome window on the space showing: true opens a new one there;
+-- false hands the link to Chrome to open wherever it would.
+m.linkRoutingNewWindow = true
 
 -- Spaces renamed or cleared since the last Chrome pass (spaceId -> true):
 -- every window on them takes the new name, whatever it was called before.
@@ -125,6 +139,18 @@ function m:start()
 
     if m.chromeWindowNames or m.dailyWindow then
         m:_startChromeNaming()
+    end
+
+    if m.linkRouting then
+        m:_startLinkRouting()
+    elseif hsurlevent.getDefaultHandler("http") == HAMMERSPOON_BUNDLE then
+        -- Routing is off but Hammerspoon is still the default browser: pass
+        -- links straight to Chrome rather than drop them.
+        m.logger.w("Hammerspoon is the default browser with linkRouting off;",
+            "make Chrome the default again in System Settings > Desktop & Dock")
+        hsurlevent.httpCallback = function(_, _, _, url)
+            m:_openInChrome(url)
+        end
     end
 end
 
@@ -378,6 +404,86 @@ end
 function m:_tick(force)
     m:ensureDailyWindow()
     m:reconcileChromeWindows(force)
+end
+
+-- Link routing -------------------------------------------------------------
+
+function m:_startLinkRouting()
+    hsurlevent.httpCallback = function(_, _, _, url)
+        m:routeLink(url)
+    end
+    if hsurlevent.getDefaultHandler("http") ~= HAMMERSPOON_BUNDLE then
+        -- Covers https too; macOS asks to confirm the new default browser.
+        hsurlevent.setDefaultHandler("http")
+    end
+end
+
+function m:_openInChrome(url)
+    hsurlevent.openURLWithBundle(url, CHROME_BUNDLE)
+end
+
+-- Open a link in the frontmost Chrome window on the space showing, or in a
+-- new window there. Anything that goes wrong hands the link to Chrome.
+function m:routeLink(url)
+    local ok, routed = pcall(m._routeLink, m, url)
+    if not ok then
+        m.logger.w("Could not route link", url, hsinspect(routed))
+    end
+    if not (ok and routed) then
+        m:_openInChrome(url)
+    end
+end
+
+-- true once the link is open on the space showing.
+function m:_routeLink(url)
+    local app = m:_chromeApp()
+    local scripted = app and m:_chromeScriptWindows()
+    if not scripted then
+        return false -- Chrome is not running; launched, it opens here anyway
+    end
+    local order = {}
+    for _, w in ipairs(hswindow.list(true) or {}) do
+        table.insert(order, w.kCGWindowNumber)
+    end
+    local pairs_ = Chrome.matchWindows(scripted, m:_chromeHsWindows(app))
+    local target = Chrome.linkTarget(pairs_, hsspaces.focusedSpace(), order)
+    if target == nil and not m.linkRoutingNewWindow then
+        return false
+    end
+
+    -- A new Chrome window opens on the space showing, like the daily window.
+    local ok, result = hsosascript.javascript(string.format([[
+        const [url, id] = %s;
+        const c = Application("Google Chrome");
+        if (id === false) {
+            const w = c.Window().make();
+            w.activeTab.url = url;
+            w.index = 1;
+            c.activate();
+        } else {
+            // Chrome makes a new tab in its front window whatever window the
+            // tab is aimed at, so bring the target to the front first (it is
+            // on the space showing), then confirm the tab landed there.
+            const w = c.windows.byId(Number(id));
+            w.index = 1;
+            const before = w.tabs.length;
+            w.tabs.push(c.Tab({ url: url }));
+            if (w.tabs.length !== before + 1) { throw new Error("tab not added to window " + id); }
+            w.activeTabIndex = w.tabs.length;
+        }
+        true;
+    ]], hsjson.encode({ url, target and target.chrome.id or false })))
+    if not ok then
+        -- routeLink hands it to Chrome; if a tab did land in another window,
+        -- the link ends up open twice rather than not at all.
+        m.logger.w("Could not open link in Chrome", url, hsinspect(result))
+        return false
+    end
+    if target then
+        target.hs.window:focus()
+    end
+    m.logger.d("Routed link", url, "to", target and target.chrome.id or "a new window")
+    return true
 end
 
 -- Coalesce bursts (a space switch plus the windows it reveals) into one pass.

@@ -192,6 +192,35 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows)
     return changes
 end
 
+-- Which Chrome window a clicked link should open in: the frontmost one on
+-- the given space, so following a link never pulls the screen to another
+-- space.
+--   pairs_:  from matchWindows; each hs window carries `id` and `spaces`
+--   spaceId: the space showing
+--   order:   hs window ids front to back (the window server's order); a
+--            window missing from it ranks behind every window in it
+-- Returns that window's pair, or nil when no Chrome window is on the space.
+function Chrome.linkTarget(pairs_, spaceId, order)
+    local rank = {}
+    for i, id in ipairs(order) do
+        rank[id] = i
+    end
+    local best, bestRank
+    for _, p in ipairs(pairs_) do
+        local onSpace = false
+        for _, s in ipairs(p.hs.spaces or {}) do
+            if s == spaceId then
+                onSpace = true
+            end
+        end
+        local r = rank[p.hs.id] or math.huge
+        if onSpace and (best == nil or r < bestRank) then
+            best, bestRank = p, r
+        end
+    end
+    return best
+end
+
 -- A cheap fingerprint of everything a pass depends on that can change
 -- without an event: which space each known Chrome window is on, and the name
 -- each space wants. Equal fingerprints mean the last settled pass still holds.

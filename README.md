@@ -27,6 +27,15 @@ Chrome windows named after the space they are on.
   opens a new window on the current space and moving a window between spaces
   is not reliable on current macOS. Closing it does not summon another; its
   date name is never overwritten, even when its space is renamed.
+- **Link routing** (`linkRouting`, off by default). A link clicked in another
+  app opens as a new tab in the frontmost Chrome window on the space showing,
+  instead of in whichever window Chrome last used -- which pulls the screen to
+  that window's space. Hammerspoon becomes the default browser for this
+  (macOS asks once). With no Chrome window on the space, a new one opens there
+  (`linkRoutingNewWindow`, on by default; off hands the link to Chrome). A
+  link that cannot be routed is handed to Chrome as usual, and with routing
+  off while Hammerspoon is still the default browser, links pass straight
+  through to Chrome. Links clicked inside Chrome are not affected.
 
 ## Install
 
