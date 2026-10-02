@@ -168,6 +168,29 @@ describe("Chrome.plan", function()
     end)
 end)
 
+describe("Chrome.linkTarget", function()
+    local function pair(chromeId, hsId, spaceId)
+        return { chrome = { id = chromeId }, hs = { id = hsId, spaces = { spaceId } } }
+    end
+
+    it("picks the frontmost Chrome window on the space showing", function()
+        local pairs_ = { pair("a", 1, 3), pair("b", 2, 3), pair("c", 3, 5) }
+        assert.are.equal("b", Chrome.linkTarget(pairs_, 3, { 9, 3, 2, 1 }).chrome.id)
+    end)
+
+    it("never picks a window on another space, however far forward", function()
+        assert.are.equal("a", Chrome.linkTarget({ pair("a", 1, 3), pair("c", 3, 5) }, 3, { 3, 1 }).chrome.id)
+    end)
+
+    it("still picks a window on the space that is missing from the order", function()
+        assert.are.equal("a", Chrome.linkTarget({ pair("a", 1, 3) }, 3, {}).chrome.id)
+    end)
+
+    it("is nil when no Chrome window is on the space", function()
+        assert.is_nil(Chrome.linkTarget({ pair("c", 3, 5) }, 3, { 3 }))
+    end)
+end)
+
 describe("Chrome.isDateName", function()
     it("recognises ISO dates only", function()
         assert.is_true(Chrome.isDateName("2026-09-30"))
