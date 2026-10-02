@@ -822,7 +822,9 @@ end
 function m:_spaceInfoText()
     local info = m:_spaceInfo()
     local spaceName = info.currentSpaceName
-    if info.isPrimary and spaceName == info.defaultName then
+    -- "Primary" only stands in for a first space nobody named: a configured
+    -- name (spaceConfig) or a custom one is shown as is.
+    if info.isPrimary and spaceName == info.defaultName and m.spaceConfig[info.currentIndex] == nil then
         spaceName = "Primary"
     end
     local currentIndex = info.currentIndex or 1
