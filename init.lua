@@ -279,6 +279,23 @@ function m:_setChromeWindowNames(namesById)
     end
 end
 
+-- A short label for a space on the primary screen, for other spoons to show
+-- next to a window: "🟥 01 - Today" for a named space, "🟦 02" for an unnamed
+-- one (the marker only with chromeWindowMarkers). nil for a space it does not
+-- know, such as one on another screen.
+function m:spaceLabel(spaceId)
+    for index, id in ipairs(m:_getAllSpaces() or {}) do
+        if id == spaceId then
+            local record = m.state:getSpaceById(spaceId)
+            local name = (record and record.name) or m.spaceConfig[index]
+            local marker = m.chromeWindowMarkers and m:_getSpaceMarker(index) or nil
+            return Chrome.spaceWindowName(index, name, marker) or
+                ((marker and marker .. " " or "") .. string.format("%02d", index))
+        end
+    end
+    return nil
+end
+
 -- The name windows on each space should carry (spaceId -> "01 - Today"), nil
 -- for a space with neither a custom nor a configured name.
 function m:_spaceNames()
