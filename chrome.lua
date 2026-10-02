@@ -101,25 +101,87 @@ function Chrome.matchWindows(chromeWindows, hsWindows, tolerance)
     return pairs_
 end
 
+-- The name a space gives its Chrome windows: its position, zero-padded, then
+-- its name -- "01 - Today". nil for a space with no name.
+function Chrome.spaceWindowName(index, name)
+    if name == nil or name == "" then
+        return nil
+    end
+    return string.format("%02d - %s", index, name)
+end
+
+-- Chrome window ids are numbers in string form; order them as numbers so the
+-- oldest window on a space takes the bare name and later ones the suffixes.
+local function byId(a, b)
+    local x, y = tonumber(a.chrome.id), tonumber(b.chrome.id)
+    if x and y and x ~= y then
+        return x < y
+    end
+    return tostring(a.chrome.id) < tostring(b.chrome.id)
+end
+
 -- Decide renames.
---   pairs_:        from matchWindows; each hs window carries `spaces` (list of ids)
---   spaceNames:    spaceId -> the name windows on that space should carry, or nil
---   managedNames:  set (name -> true) of names this module may overwrite
+--   pairs_:         from matchWindows; each hs window carries `spaces` (list of ids)
+--   spaceNames:     spaceId -> the name its windows should carry (see
+--                   spaceWindowName), or nil for an unnamed space
+--   renamedSpaces:  set (spaceId -> true) of spaces renamed since the last pass
+--   allWindows:     every Chrome scripting window, matched or not, so a new
+--                   name never repeats one already in use (defaults to pairs_)
+-- A window that already has a name keeps it -- whoever gave it, and wherever
+-- it has moved -- unless its space was renamed: then every window on that
+-- space takes the new name, or loses its name if the space's was cleared.
+-- Date-named daily windows are never touched. A second window wanting a name
+-- already in use gets " 2", then " 3", and so on.
 -- Returns a list of {id=<chrome id>, name=<new given name>} ("" clears).
-function Chrome.plan(pairs_, spaceNames, managedNames)
-    local changes = {}
+function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows)
+    local wanting = {}
     for _, p in ipairs(pairs_) do
         local current = p.chrome.givenName or ""
         local spaceId = p.hs.spaces and p.hs.spaces[1]
-        local target = spaceId and spaceNames[spaceId] or nil
-        local ours = current == "" or managedNames[current] == true
+        if spaceId ~= nil and not Chrome.isDateName(current) then
+            if renamedSpaces[spaceId] then
+                table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
+            elseif current == "" and spaceNames[spaceId] ~= nil then
+                table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
+            end
+        end
+    end
 
-        if Chrome.isDateName(current) or not ours then
-            -- pinned or person-named: leave it
-        elseif target ~= nil and current ~= target then
-            table.insert(changes, { id = p.chrome.id, name = target })
-        elseif target == nil and current ~= "" then
-            table.insert(changes, { id = p.chrome.id, name = "" })
+    local renaming = {}
+    for _, w in ipairs(wanting) do
+        renaming[w.pair.chrome.id] = true
+    end
+    local taken = {}
+    if allWindows == nil then
+        allWindows = {}
+        for _, p in ipairs(pairs_) do
+            table.insert(allWindows, p.chrome)
+        end
+    end
+    for _, cw in ipairs(allWindows) do
+        if not renaming[cw.id] and cw.givenName and cw.givenName ~= "" then
+            taken[cw.givenName] = true
+        end
+    end
+
+    table.sort(wanting, function(a, b)
+        return byId(a.pair, b.pair)
+    end)
+    local changes = {}
+    for _, w in ipairs(wanting) do
+        local current = w.pair.chrome.givenName or ""
+        local name = ""
+        if w.target ~= nil then
+            name = w.target
+            local n = 1
+            while taken[name] do
+                n = n + 1
+                name = w.target .. " " .. n
+            end
+            taken[name] = true
+        end
+        if name ~= current then
+            table.insert(changes, { id = w.pair.chrome.id, name = name })
         end
     end
     return changes

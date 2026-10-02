@@ -16,7 +16,6 @@ local hsosascript = require("hs.osascript")
 local hsnotify = require("hs.notify")
 local hsdialog = require("hs.dialog")
 local hsjson = require("hs.json")
-local hshost = require("hs.host")
 local hscaffeinate = require("hs.caffeinate")
 local hswindowfilter = require("hs.window.filter")
 
@@ -44,27 +43,29 @@ m.dockOnPrimaryOnly = false
 m.desktopLozenge = false
 m.spaceConfig = {}
 
--- Chrome windows carry their space's name (Window > Name Window..., set
--- through Chrome's scripting `givenName`, see chrome.lua). Reconciled when a
--- Chrome window appears, when the active space changes, on wake or unlock,
--- and every chromeNamesInterval seconds -- a window dragged between spaces
--- raises no event, so the timer is what eventually catches it.
+-- An unnamed Chrome window takes its space's position and name, "01 - Today"
+-- (Window > Name Window..., set through Chrome's scripting `givenName`, see
+-- chrome.lua). A window that has a name keeps it until its space is renamed.
+-- Reconciled when a Chrome window appears, when the active space changes, on
+-- wake or unlock, and every chromeNamesInterval seconds.
 m.chromeWindowNames = false
 m.chromeNamesInterval = 60
 -- A timer tick skips the full pass (which asks Chrome about every window)
 -- while the windows last seen settled are still on the same spaces and the
--- space names are unchanged. A full pass still runs at least this often, so a
--- name changed by hand in Chrome is put back eventually.
+-- space names are unchanged. A full pass still runs at least this often.
 m.chromeNamesFullInterval = 600
 
 -- Once a day, open a fresh Chrome window named for the date on the space at
--- dailyWindowSpaceIndex. It is only created while that space is showing or
--- the machine has been idle for dailyWindowIdleSeconds, so it never lands in
--- the middle of typing; otherwise the next tick tries again.
+-- dailyWindowSpaceIndex. Chrome opens a new window on the space showing, and
+-- moving a window to another space is not reliable on current macOS, so it is
+-- only created while that space is showing; otherwise a later tick tries.
 m.dailyWindow = false
 m.dailyWindowSpaceIndex = 1
 m.dailyWindowDateFormat = "%Y-%m-%d"
-m.dailyWindowIdleSeconds = 60
+
+-- Spaces renamed or cleared since the last Chrome pass (spaceId -> true):
+-- every window on them takes the new name, whatever it was called before.
+m.renamedSpaces = {}
 
 local actions = {
     rename = function(choice)
@@ -159,6 +160,7 @@ function m:renameCurrentSpace()
             newName = nil
         end
         m.state:spaceRenamed(currentSpaceId, newName)
+        m.renamedSpaces[currentSpaceId] = true
         m:_saveState()
         m.logger.d("Renamed space", currentSpaceId, "to", newName or defaultName)
         m:_scheduleReconcile(0)
@@ -166,11 +168,11 @@ function m:renameCurrentSpace()
 end
 
 function m:reset()
-    -- Clear every custom name, retiring each so the Chrome windows wearing
-    -- one get cleared too.
+    -- Clear every custom name; the Chrome windows on those spaces follow.
     for spaceId, space in pairs(m.state:getSpaces()) do
         if space.name then
             m.state:spaceRenamed(spaceId, nil)
+            m.renamedSpaces[spaceId] = true
         end
     end
     m:_saveState()
@@ -180,6 +182,7 @@ end
 function m:clearCurrentSpaceName()
     local spaceInfo = m:_spaceInfo()
     m.state:spaceRenamed(spaceInfo.currentSpaceId, nil)
+    m.renamedSpaces[spaceInfo.currentSpaceId] = true
     m:_saveState()
     m:_scheduleReconcile(0)
 end
@@ -247,20 +250,16 @@ function m:_setChromeWindowNames(namesById)
     end
 end
 
--- The name windows on each space should carry (spaceId -> name), and the set
--- of names this spoon is allowed to overwrite.
+-- The name windows on each space should carry (spaceId -> "01 - Today"), nil
+-- for a space with neither a custom nor a configured name.
 function m:_spaceNames()
     local names = {}
-    local managed = m.state:knownNames()
     for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
         local record = m.state:getSpaceById(spaceId)
         local configured = m.spaceConfig[index]
-        names[spaceId] = (record and record.name) or configured
+        names[spaceId] = Chrome.spaceWindowName(index, (record and record.name) or configured)
     end
-    for _, configured in pairs(m.spaceConfig) do
-        managed[configured] = true
-    end
-    return names, managed
+    return names
 end
 
 -- The fingerprint of the given hs window ids where they stand now. Only
@@ -294,10 +293,11 @@ function m:reconcileChromeWindows(force)
     if not scripted then
         return
     end
-    local names, managed = m:_spaceNames()
+    local names = m:_spaceNames()
     local hsWindows = m:_chromeHsWindows(app)
     local pairs_ = Chrome.matchWindows(scripted, hsWindows)
-    local changes = Chrome.plan(pairs_, names, managed)
+    local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted)
+    m.renamedSpaces = {}
     if #changes == 0 then
         -- Nothing to do: remember where everything stood, so ticks can skip
         -- until something moves. After renames, the next pass confirms them.
@@ -341,34 +341,25 @@ function m:ensureDailyWindow()
     if not spaceId then
         return
     end
-    local onTargetSpace = hsspaces.focusedSpace() == spaceId
-    if not onTargetSpace and hshost.idleTime() < m.dailyWindowIdleSeconds then
-        return -- someone is busy elsewhere; a later tick will try again
+    if hsspaces.focusedSpace() ~= spaceId then
+        return -- a new window would open here, not there; a later tick tries
     end
 
     local previous = hswindow.focusedWindow()
     local ok, result = hsosascript.javascript(string.format([[
-        const c = Application("Google Chrome");
-        const w = c.Window().make();
+        const w = Application("Google Chrome").Window().make();
         w.givenName = %s;
-        JSON.stringify({ id: String(w.id()), title: w.title(), givenName: w.givenName(), bounds: w.bounds() });
+        true;
     ]], jsString(today)))
     if not ok then
         m.logger.w("Could not create the daily Chrome window", hsinspect(result))
         return
     end
-    local created = hsjson.decode(result)
     m.logger.i("Created daily Chrome window", today)
     m:_recordDailyWindow(today)
 
-    -- Send it home once it exists as a window, then give focus back to
-    -- whatever had it: the window is for later, not for now.
+    -- Give focus back to whatever had it: the window is for later, not now.
     hstimer.doAfter(0.5, function()
-        local pairs_ = Chrome.matchWindows({ created }, m:_chromeHsWindows(app))
-        local win = pairs_[1] and pairs_[1].hs.window
-        if win and not hsfnutils.contains(hsspaces.windowSpaces(win) or {}, spaceId) then
-            hsspaces.moveWindowToSpace(win, spaceId)
-        end
         if previous then
             previous:focus()
         end
