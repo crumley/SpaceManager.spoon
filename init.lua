@@ -19,6 +19,8 @@ local hsjson = require("hs.json")
 local hscaffeinate = require("hs.caffeinate")
 local hswindowfilter = require("hs.window.filter")
 local hsurlevent = require("hs.urlevent")
+local hsaxuielement = require("hs.axuielement")
+local hsdrawing = require("hs.drawing")
 
 local CHROME_BUNDLE = "com.google.Chrome"
 local HAMMERSPOON_BUNDLE = "org.hammerspoon.Hammerspoon"
@@ -536,6 +538,117 @@ function m:_startChromeNaming()
         m:_tick(false)
     end)
     m:_scheduleReconcile(5)
+end
+
+-- Mission Control with a legend of space names in the bottom-left corner, so
+-- the numbered "Desktop N" in its spaces bar can be told apart when dragging
+-- a window to a space. The bar itself is left alone so its previews still
+-- expand on hover. Calling it again while open closes both. Mission Control
+-- opened any other way (hot corner, F3, a swipe) shows no legend.
+function m:toggleMissionControl()
+    if m.legendCanvas then
+        m:_hideLegend()
+        hsspaces.closeMissionControl()
+        return
+    end
+    m:_showLegend()
+    hsspaces.openMissionControl()
+    -- Nothing reports Mission Control opening or closing, but while it is
+    -- open the Dock's accessibility tree holds an element with id "mc". Watch
+    -- for it only while the legend is up: it goes when Mission Control does,
+    -- however that is closed, or if Mission Control never opened.
+    local seen, started = false, hstimer.secondsSinceEpoch()
+    m.legendPoll = hstimer.doEvery(0.15, function()
+        if m:_missionControlOpen() then
+            seen = true
+        elseif seen or hstimer.secondsSinceEpoch() - started > 2 then
+            m:_hideLegend()
+        end
+    end)
+end
+
+function m:_missionControlOpen()
+    local dock = hsapplication.get("com.apple.dock")
+    if not dock then
+        return false
+    end
+    local ok, children = pcall(function()
+        return hsaxuielement.applicationElement(dock):attributeValue("AXChildren")
+    end)
+    for _, child in ipairs(ok and children or {}) do
+        if child:attributeValue("AXIdentifier") == "mc" then
+            return true
+        end
+    end
+    return false
+end
+
+function m:_showLegend()
+    local current = hsspaces.focusedSpace()
+    local rows = {}
+    for _, spaceId in ipairs(m:_getAllSpaces() or {}) do
+        local label = m:spaceLabel(spaceId)
+        if label and hsspaces.spaceType(spaceId) == "user" then
+            rows[#rows + 1] = { label = label, current = spaceId == current }
+        end
+    end
+    if #rows == 0 then
+        return
+    end
+
+    local textSize, pad, gap = 22, 18, 8
+    local lineH = hsdrawing.getTextDrawingSize("Xy", { size = textSize }).h
+    local textW = 0
+    for _, row in ipairs(rows) do
+        textW = math.max(textW, hsdrawing.getTextDrawingSize(row.label, { size = textSize }).w)
+    end
+    local w = textW + pad * 2 + 16
+    local h = pad * 2 + #rows * lineH + (#rows - 1) * gap
+    local res = hsscreen.primaryScreen():fullFrame()
+
+    -- Above the desktop lozenge. "stationary" keeps Mission Control from
+    -- shrinking the canvas into a window thumbnail, so it draws over it.
+    local canvas = hscanvas.new({ x = res.x + 24, y = res.y + res.h - h - 56, w = w, h = h })
+    canvas:level(hscanvas.windowLevels.overlay)
+    canvas:behavior({ "canJoinAllSpaces", "stationary" })
+    canvas[1] = {
+        type = "rectangle",
+        roundedRectRadii = { xRadius = 14, yRadius = 14 },
+        fillColor = { white = 0.08, alpha = 0.88 },
+        strokeColor = { white = 1, alpha = 0.25 },
+        strokeWidth = 1
+    }
+    for i, row in ipairs(rows) do
+        local y = pad + (i - 1) * (lineH + gap)
+        if row.current then
+            canvas[#canvas + 1] = {
+                type = "rectangle",
+                roundedRectRadii = { xRadius = 8, yRadius = 8 },
+                fillColor = { white = 1, alpha = 0.18 },
+                frame = { x = 8, y = y - 3, w = w - 16, h = lineH + 6 }
+            }
+        end
+        canvas[#canvas + 1] = {
+            type = "text",
+            text = row.label,
+            textSize = textSize,
+            textColor = { white = 1 },
+            frame = { x = pad + 8, y = y, w = w - pad * 2, h = lineH }
+        }
+    end
+    canvas:show()
+    m.legendCanvas = canvas
+end
+
+function m:_hideLegend()
+    if m.legendPoll then
+        m.legendPoll:stop()
+        m.legendPoll = nil
+    end
+    if m.legendCanvas then
+        m.legendCanvas:delete()
+        m.legendCanvas = nil
+    end
 end
 
 function m:_getSpacesForMenu()
