@@ -343,3 +343,28 @@ describe("Chrome.labelPlan", function()
         assert.are.same({}, plan.pending)
     end)
 end)
+
+describe("Chrome.pageUrl", function()
+    it("is the extension's page given its id", function()
+        assert.are.equal("chrome-extension://abc/label.html", Chrome.pageUrl("label.html", "abc", "/x/y"))
+    end)
+
+    it("is the file on disk without one, its path escaped", function()
+        assert.are.equal("file:///Users/me/My%20Spoons/SpaceManager.spoon/chrome-extension/day.html",
+            Chrome.pageUrl("day.html", nil, "/Users/me/My Spoons/SpaceManager.spoon/chrome-extension"))
+    end)
+end)
+
+describe("Chrome.dayDivider", function()
+    it("titles the day as the extension titles its group", function()
+        local d = Chrome.dayDivider({ year = 2026, month = 10, day = 4, wday = 1 })
+        assert.are.same({ title = "📅 Sun, Oct 4", n = "4", bg = "9334e6", fg = "ffffff" }, d)
+    end)
+
+    it("colors each weekday its own way", function()
+        local thu = Chrome.dayDivider({ year = 2026, month = 10, day = 8, wday = 5 })
+        local fri = Chrome.dayDivider({ year = 2026, month = 10, day = 9, wday = 6 })
+        assert.are.equal("📅 Thu, Oct 8", thu.title)
+        assert.are_not.equal(thu.bg, fri.bg)
+    end)
+end)

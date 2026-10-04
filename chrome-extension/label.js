@@ -1,12 +1,20 @@
-// The extension's marker pages pin themselves, so they stay out of the way at
-// the left, and draw their own tab icon: pinned tabs show only the icon.
+// The marker pages pin themselves when the extension serves them, so they
+// stay out of the way at the left, and draw their own tab icon: pinned tabs
+// show only the icon.
 //   label.html?name=🟥 01 - Today&n=01&bg=ff3380&fg=000000 -- SpaceManager
 //     keeps one in every window named after a space; the icon is the space's
 //     number on its color.
 //   inbox.html -- the Inbox's marker; its icon is data-icon on <body>.
-chrome.tabs.getCurrent((tab) => {
-  if (tab && !tab.pinned) chrome.tabs.update(tab.id, { pinned: true });
-});
+//   day.html?name=📅 Sun, Oct 4&n=4&bg=9334e6&fg=ffffff -- the Inbox's divider
+//     for a day, without the extension (it groups tabs by day instead); not
+//     pinned.
+// Loaded from disk as a file:// page instead (no extension), there is no
+// chrome.tabs: SpaceManager pins the tab itself.
+if (globalThis.chrome?.tabs) {
+  chrome.tabs.getCurrent((tab) => {
+    if (tab && !tab.pinned) chrome.tabs.update(tab.id, { pinned: true });
+  });
+}
 
 const params = new URLSearchParams(location.search);
 const name = params.get("name");

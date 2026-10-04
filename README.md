@@ -32,28 +32,40 @@ Chrome windows named after the space they are on.
   left unnamed. Reconciled when a Chrome window appears, when the active space
   changes, on wake or unlock, and every `chromeNamesInterval` seconds.
 - **Chrome window label tabs** (`chromeWindowLabels`, with
-  `chromeWindowNames` and the extension below). A window named after a space
-  keeps a pinned tab of the extension's label page (`labelPage`): its icon is
+  `chromeWindowNames`). A window named after a space keeps a pinned tab of
+  the label page (`chrome-extension/label.html`): its icon is
   the space's number on the space's color and its title the window's name, so
   you can tell which space a window belongs to from inside Chrome. Renaming
   the space updates the tab; a window that loses the name loses the tab. Chrome
   only adds a tab to its front window, so a window gets its label the next time
-  it comes to the front.
+  it comes to the front (without the extension, the next time it does while
+  Chrome is the active app).
 - **An Inbox** (`inbox`, with `linkRouting`). One Chrome window, named
   `📥 Inbox` (`inboxName`), that clicked links land in -- see Link routing.
   With the SpaceManager extension loaded, every new tab in it goes into
   a tab group for the day it was opened (`📅 Sat, Oct 4`), so you can tell
-  today's links from last week's. When a link needs the Inbox and there is
-  none, a new one opens on the space showing, its first tab the extension's
-  page (`inboxPage`), which pins itself and is how the extension knows the
-  window (its tab shows 📥). Its name is never overwritten by Chrome window
-  names.
+  today's links from last week's; without it, a link routed there on a new
+  day first gets a `📅 Sat, Oct 4` divider tab (tabs you open in the window
+  yourself get none). When a link needs the Inbox and there is none, a new
+  one opens on the space showing, its first tab the Inbox page
+  (`chrome-extension/inbox.html`, pinned, its tab showing 📥). Its name is
+  never overwritten by Chrome window names.
+- **The SpaceManager Chrome extension** (`chromeExtension`, on by default).
+  The label, Inbox and day pages live in `chrome-extension/`, which is also a
+  Chrome extension that serves them, pins them, and groups the Inbox's tabs by
+  day. Load it once per machine, without the Chrome Web Store:
+  `chrome://extensions`, turn on Developer mode, Load unpacked, and choose
+  `~/.hammerspoon/Spoons/SpaceManager.spoon/chrome-extension`. Its manifest
+  carries a fixed key, so its id (`extensionId`) is the same on every machine.
+  After the folder changes, press its reload button there.
 
-  The extension is in `chrome-extension/`. Load it once per machine, without
-  the Chrome Web Store: `chrome://extensions`, turn on Developer mode, Load
-  unpacked, and choose `~/.hammerspoon/Spoons/SpaceManager.spoon/chrome-extension`.
-  Its manifest carries a fixed key, so its id (in `inboxPage` and
-  `labelPage`) is the same on every machine. After the folder changes, press its reload button there.
+  Where extensions cannot be installed (a managed Chrome), set
+  `chromeExtension = false`: the pages open from the folder as `file://`
+  pages instead, SpaceManager pins them through Chrome's Tab > Pin Tab menu
+  item (which only works while Chrome is the active app), and the Inbox gets
+  day divider tabs in place of groups. Label tabs made the other way are taken
+  over when the setting changes. A Chrome policy that blocks `file://` pages
+  blocks this too.
 - **Link routing** (`linkRouting`, off by default). A link clicked in another
   app opens as a new tab in the frontmost Chrome window on the space showing,
   instead of in whichever window Chrome last used -- which pulls the screen to
@@ -83,6 +95,7 @@ spoon.SpaceManager.chromeWindowLabels = true
 spoon.SpaceManager.linkRouting = true
 spoon.SpaceManager.inbox = true
 spoon.SpaceManager.linkRoutingNoChrome = "inbox"
+-- spoon.SpaceManager.chromeExtension = false -- where the extension cannot be installed
 spoon.SpaceManager:start()
 
 hs.hotkey.bind({"ctrl", "cmd", "option"}, "G", function() spoon.SpaceManager:show() end)

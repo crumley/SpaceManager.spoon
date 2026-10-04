@@ -372,4 +372,42 @@ function Chrome.labelPlan(windows, labelUrls)
     return { actions = actions, pending = pending }
 end
 
+-- Pages ----------------------------------------------------------------------
+
+-- The URL of a page in the spoon's chrome-extension folder: the extension's
+-- copy when extensionId is given, else the file itself (dir is the folder).
+function Chrome.pageUrl(page, extensionId, dir)
+    if extensionId ~= nil then
+        return "chrome-extension://" .. extensionId .. "/" .. page
+    end
+    local path = dir:gsub("[^%w%-%._~/]", function(c)
+        return string.format("%%%02X", c:byte())
+    end)
+    return "file://" .. path .. "/" .. page
+end
+
+local WEEKDAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+-- One color per weekday, Sunday first, so neighbouring days never share one:
+-- the extension's tab group colors (purple, blue, cyan, green, yellow, orange,
+-- red) with a text color that reads on each.
+local DAY_COLORS = {
+    { "9334e6", "ffffff" }, { "1a73e8", "ffffff" }, { "007b83", "ffffff" }, { "1e8e3e", "ffffff" },
+    { "f9ab00", "1a1a1a" }, { "fa903e", "1a1a1a" }, { "d93025", "ffffff" },
+}
+
+-- The Inbox's divider for the day of date (an os.date("*t") table) when the
+-- extension is not there to group tabs by day: the title the extension gives
+-- the day's group, "📅 Sat, Oct 4", and an icon of the day of the month on
+-- the day's color.
+function Chrome.dayDivider(date)
+    local color = DAY_COLORS[date.wday]
+    return {
+        title = "📅 " .. WEEKDAYS[date.wday] .. ", " .. MONTHS[date.month] .. " " .. date.day,
+        n = tostring(date.day),
+        bg = color[1],
+        fg = color[2],
+    }
+end
+
 return Chrome
