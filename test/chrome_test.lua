@@ -163,6 +163,11 @@ describe("Chrome.plan", function()
         assert.are.same({}, Chrome.plan({ pair("1", "2026-09-30", 1) }, names, { [1] = true }))
     end)
 
+    it("leaves a window named in keepNames alone, even on a renamed space", function()
+        local keep = { ["📥 Inbox"] = true }
+        assert.are.same({}, Chrome.plan({ pair("1", "📥 Inbox", 3) }, names, { [3] = true }, nil, keep))
+    end)
+
     it("does nothing for a window on no known space", function()
         assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, none))
     end)
@@ -188,6 +193,47 @@ describe("Chrome.linkTarget", function()
 
     it("is nil when no Chrome window is on the space", function()
         assert.is_nil(Chrome.linkTarget({ pair("c", 3, 5) }, 3, { 3 }))
+    end)
+end)
+
+describe("Chrome.linkRoute", function()
+    local INBOX = "📥 Inbox"
+    local function pair(chromeId, hsId, spaceId, name)
+        return { chrome = { id = chromeId, givenName = name }, hs = { id = hsId, spaces = { spaceId } } }
+    end
+
+    it("picks the Inbox on the space showing, over a window in front of it", function()
+        local route = Chrome.linkRoute({ pair("a", 1, 3), pair("i", 2, 3, INBOX) }, 3, { 1, 2 }, INBOX, "inbox")
+        assert.are.equal("i", route.pair.chrome.id)
+        assert.is_true(route.inbox)
+    end)
+
+    it("picks the window on the space showing over the Inbox elsewhere", function()
+        local route = Chrome.linkRoute({ pair("a", 1, 3), pair("i", 2, 5, INBOX) }, 3, { 2, 1 }, INBOX, "inbox")
+        assert.are.equal("a", route.pair.chrome.id)
+        assert.is_false(route.inbox)
+    end)
+
+    it("sends a link from a space without Chrome to the Inbox elsewhere", function()
+        local route = Chrome.linkRoute({ pair("i", 2, 5, INBOX) }, 3, { 2 }, INBOX, "inbox")
+        assert.are.equal("i", route.pair.chrome.id)
+        assert.is_true(route.inbox)
+    end)
+
+    it("asks for a new Inbox when there is none", function()
+        assert.are.same({ inbox = true }, Chrome.linkRoute({ pair("a", 1, 5) }, 3, { 1 }, INBOX, "inbox"))
+    end)
+
+    it("opens a new window here with noChrome newWindow, Inbox or not", function()
+        assert.are.same({ inbox = false }, Chrome.linkRoute({ pair("i", 2, 5, INBOX) }, 3, { 2 }, INBOX, "newWindow"))
+    end)
+
+    it("hands the link to Chrome with any other noChrome", function()
+        assert.is_nil(Chrome.linkRoute({ pair("i", 2, 5, INBOX) }, 3, { 2 }, INBOX, "chrome"))
+    end)
+
+    it("without an Inbox name, inbox means a new window here", function()
+        assert.are.same({ inbox = false }, Chrome.linkRoute({ pair("i", 2, 5, INBOX) }, 3, { 2 }, nil, "inbox"))
     end)
 end)
 

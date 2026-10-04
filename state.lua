@@ -18,9 +18,6 @@ function State.new()
         __index = State
     })
     state.spaces = {}
-    -- The date (as named) of the last daily window created, so closing it
-    -- does not summon another one the same day.
-    state.lastDailyWindow = nil
     state.version = 3
     return state
 end
@@ -29,7 +26,6 @@ function State.fromTable(tableState)
     if tableState.version == 3 or tableState.version == 2 then
         local state = State.new()
         state.spaces = tableKeysToNumber(tableState.spaces)
-        state.lastDailyWindow = tableState.lastDailyWindow
         return state
     elseif tableState.version == 1 then
         -- Migration from old activity-based system: discard old state
@@ -42,7 +38,6 @@ end
 function State:toTable()
     local ret = {
         spaces = tableKeysToString(self.spaces),
-        lastDailyWindow = self.lastDailyWindow,
         version = self.version
     }
     return ret
