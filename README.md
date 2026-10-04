@@ -26,23 +26,34 @@ Chrome windows named after the space they are on.
   window wanting a name already in use gets ` 2`, then ` 3`. A window that
   has a name keeps it, whoever gave it and wherever it is dragged, until its
   space is renamed: then every window on that space takes the new name (or
-  loses its name if the space's was cleared). Windows on an unnamed space are
+  loses its name if the space's was cleared). A window still named for its
+  space's old position (`🟩 04 - ws/main` once `ws/main` is second) takes the
+  new number too. Windows on an unnamed space are
   left unnamed. Reconciled when a Chrome window appears, when the active space
   changes, on wake or unlock, and every `chromeNamesInterval` seconds.
+- **Chrome window label tabs** (`chromeWindowLabels`, with
+  `chromeWindowNames` and the extension below). A window named after a space
+  keeps a pinned tab of the extension's label page (`labelPage`): its icon is
+  the space's number on the space's color and its title the window's name, so
+  you can tell which space a window belongs to from inside Chrome. Renaming
+  the space updates the tab; a window that loses the name loses the tab. Chrome
+  only adds a tab to its front window, so a window gets its label the next time
+  it comes to the front.
 - **An Inbox** (`inbox`, with `linkRouting`). One Chrome window, named
   `📥 Inbox` (`inboxName`), that clicked links land in -- see Link routing.
-  With the SpaceManager Inbox extension loaded, every new tab in it goes into
+  With the SpaceManager extension loaded, every new tab in it goes into
   a tab group for the day it was opened (`📅 Sat, Oct 4`), so you can tell
   today's links from last week's. When a link needs the Inbox and there is
   none, a new one opens on the space showing, its first tab the extension's
   page (`inboxPage`), which pins itself and is how the extension knows the
-  window. Its name is never overwritten by Chrome window names.
+  window (its tab shows 📥). Its name is never overwritten by Chrome window
+  names.
 
   The extension is in `chrome-extension/`. Load it once per machine, without
   the Chrome Web Store: `chrome://extensions`, turn on Developer mode, Load
   unpacked, and choose `~/.hammerspoon/Spoons/SpaceManager.spoon/chrome-extension`.
-  Its manifest carries a fixed key, so its id (in `inboxPage`) is the same on
-  every machine. After the folder changes, press its reload button there.
+  Its manifest carries a fixed key, so its id (in `inboxPage` and
+  `labelPage`) is the same on every machine. After the folder changes, press its reload button there.
 - **Link routing** (`linkRouting`, off by default). A link clicked in another
   app opens as a new tab in the frontmost Chrome window on the space showing,
   instead of in whichever window Chrome last used -- which pulls the screen to
@@ -68,6 +79,7 @@ spoon.SpaceManager.dockOnPrimaryOnly = true
 spoon.SpaceManager.desktopLozenge = true
 spoon.SpaceManager.spaceConfig = { [1] = "Today" }
 spoon.SpaceManager.chromeWindowNames = true
+spoon.SpaceManager.chromeWindowLabels = true
 spoon.SpaceManager.linkRouting = true
 spoon.SpaceManager.inbox = true
 spoon.SpaceManager.linkRoutingNoChrome = "inbox"

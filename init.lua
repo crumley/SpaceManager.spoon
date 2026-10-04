@@ -66,13 +66,24 @@ m.chromeWindowMarkers = true
 -- while the windows last seen settled are still on the same spaces and the
 -- space names are unchanged. A full pass still runs at least this often.
 m.chromeNamesFullInterval = 600
+-- With chromeWindowNames, a window named after a space also keeps a pinned
+-- tab of the SpaceManager extension's label page (labelPage): its tab title
+-- is the window's name and its icon the space's number on the space's color,
+-- so a window shows which space it belongs to from inside Chrome. Renaming
+-- the space updates the tab; a window that loses the name loses the tab.
+-- Chrome only adds a tab to its front window, so a window still missing its
+-- label gets it the next time it comes to the front. Needs the extension (see
+-- inbox).
+m.chromeWindowLabels = false
+m.labelPage = "chrome-extension://jcabbbkgmcfmkekcjeokgbhniieojpgd/label.html"
 
 -- The Inbox: one Chrome window, named inboxName, that links land in (see
 -- linkRoutingNoChrome). It is opened when a link needs it and there is none,
 -- with the SpaceManager Inbox extension's page as its first tab (inboxPage):
 -- the extension keeps that tab pinned and puts every new tab in the window
 -- into a group for the day it was opened, "📅 Sat, Oct 4". Load the extension
--- unpacked from this spoon's chrome-extension folder. Its name is never
+-- unpacked from this spoon's chrome-extension folder (it also draws the
+-- chromeWindowLabels tabs). Its name is never
 -- overwritten by chromeWindowNames.
 m.inbox = false
 m.inboxName = "📥 Inbox"
@@ -238,20 +249,32 @@ function m:_chromeApp()
 end
 
 -- Chrome's own view of its windows, via scripting: id, title, givenName,
--- bounds {x, y, width, height}. nil when Chrome is not running or refuses.
-function m:_chromeScriptWindows()
+-- bounds {x, y, width, height}. With labelPage, also front (Chrome's front
+-- window) and labels, the window's tabs showing that page {index=, url=}.
+-- nil when Chrome is not running or refuses.
+function m:_chromeScriptWindows(labelPage)
     if not m:_chromeApp() then
         return nil
     end
     -- One Apple Event per property for all windows at once, not one per
     -- window: the cost stays flat however many windows are open.
-    local ok, result = hsosascript.javascript([[
+    local ok, result = hsosascript.javascript(string.format([[
+        const labelPage = %s;
         const ws = Application("Google Chrome").windows;
         const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds();
-        JSON.stringify(ids.map((id, i) => ({
-            id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i]
-        })));
-    ]])
+        const indexes = labelPage ? ws.index() : [], urls = labelPage ? ws.tabs.url() : [];
+        JSON.stringify(ids.map((id, i) => {
+            const w = { id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i] };
+            if (labelPage) {
+                w.front = indexes[i] === 1;
+                w.labels = [];
+                urls[i].forEach((url, t) => {
+                    if (url.startsWith(labelPage)) { w.labels.push({ index: t + 1, url: url }); }
+                });
+            }
+            return w;
+        }));
+    ]], labelPage and jsString(labelPage) or "false"))
     if not ok then
         m.logger.w("Could not list Chrome windows", hsinspect(result))
         return nil
@@ -288,6 +311,62 @@ function m:_setChromeWindowNames(namesById)
     if not ok then
         m.logger.w("Could not set Chrome window names", hsinspect(result))
     end
+end
+
+-- Carry out Chrome.labelPlan's actions. Only ever touches tabs showing
+-- labelPage, checked again here in case the tabs moved since they were read.
+function m:_applyChromeLabels(actions)
+    local ok, result = hsosascript.javascript(string.format([[
+        const [actions, labelPage] = %s;
+        const c = Application("Google Chrome");
+        const isLabel = (tab) => tab.url().startsWith(labelPage);
+        actions.forEach(a => {
+            try {
+                const w = c.windows.byId(Number(a.id));
+                if (a.close) {
+                    a.close.forEach(i => { const t = w.tabs[i - 1]; if (isLabel(t)) { t.close(); } });
+                } else if (a.set) {
+                    const t = w.tabs[a.set.index - 1];
+                    if (isLabel(t)) { t.url = a.set.url; }
+                } else if (a.add && w.index() === 1) {
+                    // Chrome makes a new tab in its front window whatever
+                    // window it is aimed at: only the front window gets one.
+                    const active = w.activeTabIndex(), before = w.tabs.length;
+                    w.tabs.push(c.Tab({ url: a.add }));
+                    if (w.tabs.length === before + 1) { w.activeTabIndex = active; }
+                }
+            } catch (e) {}
+        });
+        true;
+    ]], hsjson.encode({ actions, m.labelPage })))
+    if not ok then
+        m.logger.w("Could not update Chrome label tabs", hsinspect(result))
+    end
+end
+
+local function urlEncode(str)
+    return (str:gsub("[^%w%-%._~]", function(c)
+        return string.format("%%%02X", c:byte())
+    end))
+end
+
+local function hexColor(color)
+    return string.format("%02x%02x%02x", math.floor(color.red * 255 + 0.5), math.floor(color.green * 255 + 0.5),
+        math.floor(color.blue * 255 + 0.5))
+end
+
+-- The label page url for each space window name (see chromeWindowLabels).
+function m:_labelUrls(names)
+    local urls = {}
+    for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
+        local name = names[spaceId]
+        if name ~= nil then
+            local color = m:_getSpaceColor(index)
+            urls[name] = string.format("%s?name=%s&n=%02d&bg=%s&fg=%s", m.labelPage, urlEncode(name), index,
+                hexColor(color), hexColor(m:_getContrastingTextColor(color)))
+        end
+    end
+    return urls
 end
 
 -- A short label for a space on the primary screen, for other spoons to show
@@ -351,7 +430,7 @@ function m:reconcileChromeWindows(force)
     m.chromeSettled = nil
 
     local app = m:_chromeApp()
-    local scripted = app and m:_chromeScriptWindows()
+    local scripted = app and m:_chromeScriptWindows(m.chromeWindowLabels and m.labelPage or nil)
     if not scripted then
         return
     end
@@ -360,7 +439,30 @@ function m:reconcileChromeWindows(force)
     local pairs_ = Chrome.matchWindows(scripted, hsWindows)
     local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted, m:_keepNames())
     m.renamedSpaces = {}
-    if #changes == 0 then
+
+    local labelActions = {}
+    if m.chromeWindowLabels then
+        -- Labels follow the names this pass leaves each window with.
+        local renamed = {}
+        for _, change in ipairs(changes) do
+            renamed[change.id] = change.name
+        end
+        local windows = {}
+        for _, w in ipairs(scripted) do
+            table.insert(windows, { id = w.id, givenName = renamed[w.id] or w.givenName, front = w.front,
+                labels = w.labels })
+        end
+        local labelPlan = Chrome.labelPlan(windows, m:_labelUrls(names))
+        labelActions = labelPlan.actions
+        -- The rest come to the front later; a Chrome focus then forces a pass.
+        m.chromeLabelsPending = #labelPlan.pending > 0
+        if #labelActions > 0 then
+            m.logger.d("Chrome label tabs", hsinspect(labelActions))
+            m:_applyChromeLabels(labelActions)
+        end
+    end
+
+    if #changes == 0 and #labelActions == 0 then
         -- Nothing to do: remember where everything stood, so ticks can skip
         -- until something moves. After renames, the next pass confirms them.
         local ids = {}
@@ -368,6 +470,9 @@ function m:reconcileChromeWindows(force)
             table.insert(ids, w.id)
         end
         m.chromeSettled = { ids = ids, signature = m:_chromeSignature(ids, names), at = now }
+        return
+    end
+    if #changes == 0 then
         return
     end
     local byId = {}
@@ -509,6 +614,11 @@ function m:_startChromeNaming()
     m.chromeFilter = hswindowfilter.new("Google Chrome")
     m.chromeFilter:subscribe(hswindowfilter.windowCreated, function()
         m:_scheduleReconcile(1)
+    end)
+    m.chromeFilter:subscribe(hswindowfilter.windowFocused, function()
+        if m.chromeLabelsPending then
+            m:_scheduleReconcile(0.5)
+        end
     end)
     m.wakeWatcher = hscaffeinate.watcher.new(function(event)
         if event == hscaffeinate.watcher.systemDidWake or event == hscaffeinate.watcher.screensDidUnlock then

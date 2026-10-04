@@ -168,6 +168,23 @@ describe("Chrome.plan", function()
         assert.are.same({}, Chrome.plan({ pair("1", "📥 Inbox", 3) }, names, { [3] = true }, nil, keep))
     end)
 
+    it("renumbers a window whose space moved", function()
+        assert.are.same({ { id = "1", name = "03 - Planning" } }, Chrome.plan({ pair("1", "05 - Planning", 3) }, names, none))
+        local marked = { [2] = "🟦 02 - ws/main" }
+        assert.are.same({ { id = "1", name = "🟦 02 - ws/main" } },
+            Chrome.plan({ pair("1", "🟩 04 - ws/main", 2) }, marked, none))
+    end)
+
+    it("renumbers a moved second window, keeping the names unique", function()
+        local changes = Chrome.plan({ pair("1", "03 - Planning", 3), pair("2", "05 - Planning 2", 3) }, names, none)
+        assert.are.same({ { id = "2", name = "03 - Planning 2" } }, changes)
+    end)
+
+    it("leaves a current second window and a look-alike name alone", function()
+        assert.are.same({}, Chrome.plan({ pair("1", "03 - Planning 2", 3) }, names, none))
+        assert.are.same({}, Chrome.plan({ pair("1", "05 - Planning ahead", 3) }, names, none))
+    end)
+
     it("does nothing for a window on no known space", function()
         assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, none))
     end)
@@ -266,5 +283,63 @@ describe("Chrome.signature", function()
     it("changes when a space is renamed", function()
         assert.are_not.equal(Chrome.signature({ [1] = { 3 } }, names),
             Chrome.signature({ [1] = { 3 } }, { [3] = "Plans", [5] = "Taxes" }))
+    end)
+end)
+
+describe("Chrome.labelPlan", function()
+    local urls = { ["🟥 01 - Today"] = "L?today", ["🟦 02 - Work"] = "L?work" }
+
+    it("adds a label to a named front window", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today", front = true, labels = {} } }, urls)
+        assert.are.same({ { id = "1", add = "L?today" } }, plan.actions)
+        assert.are.same({}, plan.pending)
+    end)
+
+    it("waits for a window that is not in front", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟦 02 - Work", front = false, labels = {} } }, urls)
+        assert.are.same({}, plan.actions)
+        assert.are.same({ "1" }, plan.pending)
+    end)
+
+    it("labels a second window on a space by its base name", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today 2", front = true, labels = {} } }, urls)
+        assert.are.same({ { id = "1", add = "L?today" } }, plan.actions)
+    end)
+
+    it("leaves a correct label alone", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today", labels = { { index = 1, url = "L?today" } } } }, urls)
+        assert.are.same({}, plan.actions)
+        assert.are.same({}, plan.pending)
+    end)
+
+    it("points a stale label at the new name, wherever the window is", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟦 02 - Work", front = false, labels = { { index = 2, url = "L?old" } } } }, urls)
+        assert.are.same({ { id = "1", set = { index = 2, url = "L?work" } } }, plan.actions)
+    end)
+
+    it("closes the label of a window that lost its space name", function()
+        local plan = Chrome.labelPlan({
+            { id = "1", givenName = "", labels = { { index = 1, url = "L?today" } } },
+            { id = "2", givenName = "My research", labels = { { index = 3, url = "L?work" } } },
+        }, urls)
+        assert.are.same({ { id = "1", close = { 1 } }, { id = "2", close = { 3 } } }, plan.actions)
+    end)
+
+    it("keeps the right one of several labels and closes the rest", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today", labels = {
+            { index = 1, url = "L?old" }, { index = 2, url = "L?today" }, { index = 5, url = "L?today" } } } }, urls)
+        assert.are.same({ { id = "1", close = { 5, 1 } } }, plan.actions)
+    end)
+
+    it("fixes the first label after closing extras to its left", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟦 02 - Work", labels = {
+            { index = 2, url = "L?old" }, { index = 4, url = "L?older" } } } }, urls)
+        assert.are.same({ { id = "1", close = { 4 } }, { id = "1", set = { index = 2, url = "L?work" } } }, plan.actions)
+    end)
+
+    it("leaves windows without a space name and no labels alone", function()
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "📥 Inbox", front = true, labels = {} } }, urls)
+        assert.are.same({}, plan.actions)
+        assert.are.same({}, plan.pending)
     end)
 end)
