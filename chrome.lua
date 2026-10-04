@@ -132,18 +132,21 @@ end
 --   renamedSpaces:  set (spaceId -> true) of spaces renamed since the last pass
 --   allWindows:     every Chrome scripting window, matched or not, so a new
 --                   name never repeats one already in use (defaults to pairs_)
+--   keepNames:      set (name -> true) of names never touched, like the Inbox's
 -- A window that already has a name keeps it -- whoever gave it, and wherever
 -- it has moved -- unless its space was renamed: then every window on that
 -- space takes the new name, or loses its name if the space's was cleared.
--- Date-named daily windows are never touched. A second window wanting a name
+-- Date-named daily windows, and windows named in keepNames, are never
+-- touched. A second window wanting a name
 -- already in use gets " 2", then " 3", and so on.
 -- Returns a list of {id=<chrome id>, name=<new given name>} ("" clears).
-function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows)
+function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames)
+    keepNames = keepNames or {}
     local wanting = {}
     for _, p in ipairs(pairs_) do
         local current = p.chrome.givenName or ""
         local spaceId = p.hs.spaces and p.hs.spaces[1]
-        if spaceId ~= nil and not Chrome.isDateName(current) then
+        if spaceId ~= nil and not Chrome.isDateName(current) and not keepNames[current] then
             if renamedSpaces[spaceId] then
                 table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
             elseif current == "" and spaceNames[spaceId] ~= nil then
@@ -219,6 +222,43 @@ function Chrome.linkTarget(pairs_, spaceId, order)
         end
     end
     return best
+end
+
+-- Where a clicked link goes, with an Inbox window (named inboxName):
+--   1. the Inbox, when it is on the space showing;
+--   2. else the frontmost Chrome window on the space showing (linkTarget);
+--   3. else, by noChrome: "inbox" the Inbox wherever it is (a new one when
+--      there is none), "newWindow" a new window here, anything else nil.
+-- inboxName nil leaves out 1 and makes "inbox" act as "newWindow".
+-- Returns {pair=<pair or nil>, inbox=<bool>}: pair nil means a new window
+-- (a new Inbox when inbox is true). nil hands the link to Chrome.
+function Chrome.linkRoute(pairs_, spaceId, order, inboxName, noChrome)
+    local inbox
+    if inboxName ~= nil then
+        for _, p in ipairs(pairs_) do
+            if p.chrome.givenName == inboxName then
+                inbox = p
+                break
+            end
+        end
+    end
+    if inbox then
+        for _, s in ipairs(inbox.hs.spaces or {}) do
+            if s == spaceId then
+                return { pair = inbox, inbox = true }
+            end
+        end
+    end
+    local here = Chrome.linkTarget(pairs_, spaceId, order)
+    if here then
+        return { pair = here, inbox = false }
+    end
+    if noChrome == "inbox" and inboxName ~= nil then
+        return { pair = inbox, inbox = true }
+    elseif noChrome == "inbox" or noChrome == "newWindow" then
+        return { inbox = false }
+    end
+    return nil
 end
 
 -- A cheap fingerprint of everything a pass depends on that can change
