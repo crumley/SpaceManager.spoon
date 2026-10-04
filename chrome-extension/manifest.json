@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "SpaceManager Inbox",
+  "description": "Groups the tabs opened in the Inbox window by the day they were opened.",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkZP7qPnY3a5hkVDCG8gCue9+egat6F6O4ofPMrSL1OcpQTTnEOetcoSLpRX+eK6K2Ywet1A2UkKAIKdv4Wds/+vmPbUo1FVVXvqu1ylym1q20dzduv0/hIIoGk8a6rov9fPAaTR7Lzao4h0rO/WwFZjcHLlTxerUw/gvY+ijrJiF1XM0mcFQED7ZgmcJrKL7ujn2Wak8xM6LOaS3ZJAH/ho2JiVG1QZF6Dj6e84XbKnhe8w/EYC6nxUYQ6kpN2gxSaeAX/BEErKtVfi5ViylbTELdIpfMaWa6XOHkEX0eSmwcUmfDtzqBmzwn4iC4ipbxiChDcu2h7d72IGbtx4t1wIDAQAB",
+  "permissions": ["tabs", "tabGroups"],
+  "background": { "service_worker": "background.js" }
+}

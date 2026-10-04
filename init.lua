@@ -67,13 +67,16 @@ m.chromeWindowMarkers = true
 -- space names are unchanged. A full pass still runs at least this often.
 m.chromeNamesFullInterval = 600
 
--- Once a day, open a fresh Chrome window named for the date on the space at
--- dailyWindowSpaceIndex. Chrome opens a new window on the space showing, and
--- moving a window to another space is not reliable on current macOS, so it is
--- only created while that space is showing; otherwise a later tick tries.
-m.dailyWindow = false
-m.dailyWindowSpaceIndex = 1
-m.dailyWindowDateFormat = "%Y-%m-%d"
+-- The Inbox: one Chrome window, named inboxName, that links land in (see
+-- linkRoutingNoChrome). It is opened when a link needs it and there is none,
+-- with the SpaceManager Inbox extension's page as its first tab (inboxPage):
+-- the extension keeps that tab pinned and puts every new tab in the window
+-- into a group for the day it was opened, "📅 Sat, Oct 4". Load the extension
+-- unpacked from this spoon's chrome-extension folder. Its name is never
+-- overwritten by chromeWindowNames.
+m.inbox = false
+m.inboxName = "📥 Inbox"
+m.inboxPage = "chrome-extension://jcabbbkgmcfmkekcjeokgbhniieojpgd/inbox.html"
 
 -- Links clicked in other apps open in a Chrome window on the space showing,
 -- rather than in whichever window Chrome last used, which pulls the screen to
@@ -81,9 +84,12 @@ m.dailyWindowDateFormat = "%Y-%m-%d"
 -- with linkRouting on, start() asks macOS to make it so (macOS confirms the
 -- change once). A link that cannot be routed is handed to Chrome as usual.
 m.linkRouting = false
--- With no Chrome window on the space showing: true opens a new one there;
--- false hands the link to Chrome to open wherever it would.
-m.linkRoutingNewWindow = true
+-- A link opens in the Inbox when it is on the space showing (with inbox
+-- on), else in the frontmost Chrome window there. With no Chrome window on
+-- the space showing: "inbox" opens it in the Inbox, wherever that is (macOS
+-- moves to its space), or a new Inbox here; "newWindow" opens a new window
+-- here; "chrome" hands the link to Chrome to open wherever it would.
+m.linkRoutingNoChrome = "newWindow"
 
 -- Spaces renamed or cleared since the last Chrome pass (spaceId -> true):
 -- every window on them takes the new name, whatever it was called before.
@@ -142,7 +148,7 @@ function m:start()
         m:_restoreState()
     end)
 
-    if m.chromeWindowNames or m.dailyWindow then
+    if m.chromeWindowNames then
         m:_startChromeNaming()
     end
 
@@ -352,7 +358,7 @@ function m:reconcileChromeWindows(force)
     local names = m:_spaceNames()
     local hsWindows = m:_chromeHsWindows(app)
     local pairs_ = Chrome.matchWindows(scripted, hsWindows)
-    local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted)
+    local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted, m:_keepNames())
     m.renamedSpaces = {}
     if #changes == 0 then
         -- Nothing to do: remember where everything stood, so ticks can skip
@@ -372,63 +378,7 @@ function m:reconcileChromeWindows(force)
     m:_setChromeWindowNames(byId)
 end
 
-function m:ensureDailyWindow()
-    if not m.dailyWindow then
-        return
-    end
-    local today = os.date(m.dailyWindowDateFormat)
-    if m.state.lastDailyWindow == today then
-        return
-    end
-    local app = m:_chromeApp()
-    local scripted = app and m:_chromeScriptWindows()
-    if not scripted then
-        return
-    end
-    for _, w in ipairs(scripted) do
-        if w.givenName == today then
-            -- Chrome restored it, or Hammerspoon reloaded after making it
-            m:_recordDailyWindow(today)
-            return
-        end
-    end
-
-    local spaceId = (m:_getAllSpaces() or {})[m.dailyWindowSpaceIndex]
-    if not spaceId then
-        return
-    end
-    if hsspaces.focusedSpace() ~= spaceId then
-        return -- a new window would open here, not there; a later tick tries
-    end
-
-    local previous = hswindow.focusedWindow()
-    local ok, result = hsosascript.javascript(string.format([[
-        const w = Application("Google Chrome").Window().make();
-        w.givenName = %s;
-        true;
-    ]], jsString(today)))
-    if not ok then
-        m.logger.w("Could not create the daily Chrome window", hsinspect(result))
-        return
-    end
-    m.logger.i("Created daily Chrome window", today)
-    m:_recordDailyWindow(today)
-
-    -- Give focus back to whatever had it: the window is for later, not now.
-    hstimer.doAfter(0.5, function()
-        if previous then
-            previous:focus()
-        end
-    end)
-end
-
-function m:_recordDailyWindow(today)
-    m.state.lastDailyWindow = today
-    m:_saveState()
-end
-
 function m:_tick(force)
-    m:ensureDailyWindow()
     m:reconcileChromeWindows(force)
 end
 
@@ -448,8 +398,8 @@ function m:_openInChrome(url)
     hsurlevent.openURLWithBundle(url, CHROME_BUNDLE)
 end
 
--- Open a link in the frontmost Chrome window on the space showing, or in a
--- new window there. Anything that goes wrong hands the link to Chrome.
+-- Open a link where linkRoutingNoChrome and the Inbox say (see
+-- Chrome.linkRoute). Anything that goes wrong hands the link to Chrome.
 function m:routeLink(url)
     local ok, routed = pcall(m._routeLink, m, url)
     if not ok then
@@ -460,7 +410,12 @@ function m:routeLink(url)
     end
 end
 
--- true once the link is open on the space showing.
+-- Names chromeWindowNames never overwrites.
+function m:_keepNames()
+    return m.inbox and { [m.inboxName] = true } or {}
+end
+
+-- true once the link is open.
 function m:_routeLink(url)
     local app = m:_chromeApp()
     local scripted = app and m:_chromeScriptWindows()
@@ -472,24 +427,47 @@ function m:_routeLink(url)
         table.insert(order, w.kCGWindowNumber)
     end
     local pairs_ = Chrome.matchWindows(scripted, m:_chromeHsWindows(app))
-    local target = Chrome.linkTarget(pairs_, hsspaces.focusedSpace(), order)
-    if target == nil and not m.linkRoutingNewWindow then
+    local route = Chrome.linkRoute(pairs_, hsspaces.focusedSpace(), order,
+        m.inbox and m.inboxName or nil, m.linkRoutingNoChrome)
+    if route == nil then
         return false
     end
+    local id = route.pair and route.pair.chrome.id
+    if route.inbox and id == nil then
+        -- An Inbox Hammerspoon could not place on a space is still the Inbox.
+        for _, w in ipairs(scripted) do
+            if w.givenName == m.inboxName then
+                id = w.id
+            end
+        end
+    end
+    local target = id and { id = id, window = route.pair and route.pair.hs.window }
+    local newInbox = route.inbox and target == nil
 
-    -- A new Chrome window opens on the space showing, like the daily window.
+    -- A new Chrome window opens on the space showing.
     local ok, result = hsosascript.javascript(string.format([[
-        const [url, id] = %s;
+        const [url, id, inboxName, inboxPage] = %s;
         const c = Application("Google Chrome");
         if (id === false) {
             const w = c.Window().make();
-            w.activeTab.url = url;
+            if (inboxName) {
+                w.givenName = inboxName;
+                if (inboxPage) {
+                    w.activeTab.url = inboxPage;
+                    w.tabs.push(c.Tab({ url: url }));
+                    w.activeTabIndex = w.tabs.length;
+                } else {
+                    w.activeTab.url = url;
+                }
+            } else {
+                w.activeTab.url = url;
+            }
             w.index = 1;
             c.activate();
         } else {
             // Chrome makes a new tab in its front window whatever window the
-            // tab is aimed at, so bring the target to the front first (it is
-            // on the space showing), then confirm the tab landed there.
+            // tab is aimed at, so bring the target to the front first, then
+            // confirm the tab landed there.
             const w = c.windows.byId(Number(id));
             w.index = 1;
             const before = w.tabs.length;
@@ -498,17 +476,21 @@ function m:_routeLink(url)
             w.activeTabIndex = w.tabs.length;
         }
         true;
-    ]], hsjson.encode({ url, target and target.chrome.id or false })))
+    ]], hsjson.encode({ url, target and target.id or false,
+        newInbox and m.inboxName or false, newInbox and m.inboxPage or false })))
     if not ok then
         -- routeLink hands it to Chrome; if a tab did land in another window,
         -- the link ends up open twice rather than not at all.
         m.logger.w("Could not open link in Chrome", url, hsinspect(result))
         return false
     end
-    if target then
-        target.hs.window:focus()
+    if target and target.window then
+        -- On another space (the Inbox), macOS moves to it.
+        target.window:focus()
+    elseif target then
+        app:activate()
     end
-    m.logger.d("Routed link", url, "to", target and target.chrome.id or "a new window")
+    m.logger.d("Routed link", url, "to", target and target.id or (newInbox and "a new Inbox" or "a new window"))
     return true
 end
 
