@@ -10,10 +10,10 @@ Chrome windows named after the space they are on.
   custom name per space set through the menu (`show()`), and a desktop lozenge
   (`desktopLozenge`) that shows the current space's name and position.
 - **A Mission Control legend** (`toggleMissionControl()`, bind it to a
-  hotkey). Opens Mission Control with every space's name listed in the
-  bottom-left corner -- `🟥 01 - Today`, `🟦 02 - <untitled>` -- with the
-  current one highlighted, so you can tell which "Desktop N" to drag a window
-  to. The spaces bar is left as is, so its previews still expand on hover.
+  hotkey). Opens Mission Control with a lozenge per space stacked in the
+  bottom-left corner, in the desktop lozenge's colors and font --
+  `01 - Today`, `02 - <untitled>` -- with the current one outlined, so you can
+  tell which "Desktop N" to drag a window to. The spaces bar is left as is, so its previews still expand on hover.
   Calling it again closes both; closing Mission Control any other way removes
   the legend. Mission Control opened by a hot corner, F3 or a swipe shows no
   legend.

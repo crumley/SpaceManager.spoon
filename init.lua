@@ -583,57 +583,68 @@ function m:_missionControlOpen()
     return false
 end
 
+-- One lozenge per space, in the desktop lozenge's colors and font, stacked
+-- above it: " 01 - Today". The current space's is outlined.
 function m:_showLegend()
     local current = hsspaces.focusedSpace()
     local rows = {}
-    for _, spaceId in ipairs(m:_getAllSpaces() or {}) do
-        local label = m:spaceLabel(spaceId)
-        if label and hsspaces.spaceType(spaceId) == "user" then
-            rows[#rows + 1] = { label = label, current = spaceId == current }
+    for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
+        if hsspaces.spaceType(spaceId) == "user" then
+            local record = m.state:getSpaceById(spaceId)
+            local name = (record and record.name) or m.spaceConfig[index]
+            if name == nil or name == "" then
+                name = m.unnamedSpaceName
+            end
+            rows[#rows + 1] = {
+                text = " " .. (Chrome.spaceWindowName(index, name) or string.format("%02d", index)) .. " ",
+                color = m:_getSpaceColor(index),
+                current = spaceId == current
+            }
         end
     end
     if #rows == 0 then
         return
     end
 
-    local textSize, pad, gap = 22, 18, 8
-    local lineH = hsdrawing.getTextDrawingSize("Xy", { size = textSize }).h
-    local textW = 0
+    local style = { font = "Courier", size = 24 }
+    local lineH, gap = 28, 6
+    local w = 0
     for _, row in ipairs(rows) do
-        textW = math.max(textW, hsdrawing.getTextDrawingSize(row.label, { size = textSize }).w)
+        w = math.max(w, hsdrawing.getTextDrawingSize(row.text, style).w)
     end
-    local w = textW + pad * 2 + 16
-    local h = pad * 2 + #rows * lineH + (#rows - 1) * gap
+    w = math.ceil(w) + 4
+    local h = #rows * lineH + (#rows - 1) * gap
+    local inset = 2 -- room for the current space's outline
     local res = hsscreen.primaryScreen():fullFrame()
 
     -- Above the desktop lozenge. "stationary" keeps Mission Control from
     -- shrinking the canvas into a window thumbnail, so it draws over it.
-    local canvas = hscanvas.new({ x = res.x + 24, y = res.y + res.h - h - 56, w = w, h = h })
+    local canvas = hscanvas.new({
+        x = res.x + 20 - inset,
+        y = res.y + res.h - 26 - gap - h - inset,
+        w = w + inset * 2,
+        h = h + inset * 2
+    })
     canvas:level(hscanvas.windowLevels.overlay)
     canvas:behavior({ "canJoinAllSpaces", "stationary" })
-    canvas[1] = {
-        type = "rectangle",
-        roundedRectRadii = { xRadius = 14, yRadius = 14 },
-        fillColor = { white = 0.08, alpha = 0.88 },
-        strokeColor = { white = 1, alpha = 0.25 },
-        strokeWidth = 1
-    }
     for i, row in ipairs(rows) do
-        local y = pad + (i - 1) * (lineH + gap)
-        if row.current then
-            canvas[#canvas + 1] = {
-                type = "rectangle",
-                roundedRectRadii = { xRadius = 8, yRadius = 8 },
-                fillColor = { white = 1, alpha = 0.18 },
-                frame = { x = 8, y = y - 3, w = w - 16, h = lineH + 6 }
-            }
-        end
+        local frame = { x = inset, y = inset + (i - 1) * (lineH + gap), w = w, h = lineH }
+        canvas[#canvas + 1] = {
+            type = "rectangle",
+            action = row.current and "strokeAndFill" or "fill",
+            fillColor = row.color,
+            strokeColor = { white = 1 },
+            strokeWidth = 2,
+            roundedRectRadii = { xRadius = 5, yRadius = 5 },
+            frame = frame
+        }
         canvas[#canvas + 1] = {
             type = "text",
-            text = row.label,
-            textSize = textSize,
-            textColor = { white = 1 },
-            frame = { x = pad + 8, y = y, w = w - pad * 2, h = lineH }
+            text = row.text,
+            textFont = "Courier",
+            textSize = 24,
+            textColor = m:_getContrastingTextColor(row.color),
+            frame = frame
         }
     end
     canvas:show()
