@@ -125,6 +125,23 @@ local function byId(a, b)
     return tostring(a.chrome.id) < tostring(b.chrome.id)
 end
 
+-- "🟩 04 - ws/main" -> "🟩 04", "ws/main": the marker and position, then
+-- the space's own name. nil for a name not in that shape.
+local function nameParts(name)
+    return name:match("^([^%d]*%d%d) %- (.+)$")
+end
+
+-- Whether current is target from before its space moved: the same space name
+-- (or a numbered second window of it) behind another position or marker.
+local function movedName(current, target)
+    local ch, cr = nameParts(current)
+    local th, tr = nameParts(target)
+    if ch == nil or th == nil or ch == th then
+        return false
+    end
+    return cr == tr or cr:match("^(.-) %d+$") == tr
+end
+
 -- Decide renames.
 --   pairs_:         from matchWindows; each hs window carries `spaces` (list of ids)
 --   spaceNames:     spaceId -> the name its windows should carry (see
@@ -136,6 +153,8 @@ end
 -- A window that already has a name keeps it -- whoever gave it, and wherever
 -- it has moved -- unless its space was renamed: then every window on that
 -- space takes the new name, or loses its name if the space's was cleared.
+-- A window still carrying its space's name from an old position ("🟩 04 -
+-- ws/main" once ws/main is second) takes the current one too.
 -- Date-named daily windows, and windows named in keepNames, are never
 -- touched. A second window wanting a name
 -- already in use gets " 2", then " 3", and so on.
@@ -150,6 +169,8 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames)
             if renamedSpaces[spaceId] then
                 table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
             elseif current == "" and spaceNames[spaceId] ~= nil then
+                table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
+            elseif spaceNames[spaceId] ~= nil and movedName(current, spaceNames[spaceId]) then
                 table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
             end
         end
@@ -280,6 +301,75 @@ function Chrome.signature(spacesById, spaceNames)
     end
     table.sort(parts)
     return table.concat(parts, "\n")
+end
+
+-- Pinned label tabs: a window carrying a space's name ("🟥 01 - Today", or
+-- "🟥 01 - Today 2" for a second window) keeps one tab of the extension's
+-- label page showing that space, so the window says whose it is from inside
+-- Chrome too. A window with any other name, or none, keeps no label tab.
+--   windows:   { {id=, givenName=, front=<bool>, labels={ {index=, url=}, ... }}, ... }
+--              labels: the window's label tabs (1-based tab index, current url)
+--   labelUrls: space window name -> the label page url for that space
+-- Chrome only makes a new tab in its front window, so a missing label is
+-- added only there; elsewhere it waits (the window is reported in pending).
+-- Returns { actions = { {id=, set={index=, url=}} | {id=, add=url} |
+-- {id=, close={index, ...}} (highest index first) }, pending = {id, ...} }.
+function Chrome.labelPlan(windows, labelUrls)
+    local function wanted(name)
+        if name == nil or name == "" then
+            return nil
+        end
+        if labelUrls[name] then
+            return labelUrls[name]
+        end
+        local base = name:match("^(.-) %d+$")
+        return base and labelUrls[base] or nil
+    end
+
+    local actions, pending = {}, {}
+    for _, w in ipairs(windows) do
+        local url = wanted(w.givenName)
+        local labels = w.labels or {}
+        local keep -- the label tab that stays, preferring one already right
+        if url ~= nil then
+            for _, l in ipairs(labels) do
+                if l.url == url then
+                    keep = l
+                    break
+                end
+            end
+            keep = keep or labels[1]
+        end
+        local close = {}
+        for _, l in ipairs(labels) do
+            if l ~= keep then
+                table.insert(close, l.index)
+            end
+        end
+        table.sort(close, function(a, b)
+            return a > b
+        end)
+        if #close > 0 then
+            table.insert(actions, { id = w.id, close = close })
+        end
+        if keep and keep.url ~= url then
+            -- Closing tabs to its left shifts it down.
+            local index = keep.index
+            for _, i in ipairs(close) do
+                if i < keep.index then
+                    index = index - 1
+                end
+            end
+            table.insert(actions, { id = w.id, set = { index = index, url = url } })
+        elseif url ~= nil and keep == nil then
+            if w.front then
+                table.insert(actions, { id = w.id, add = url })
+            else
+                table.insert(pending, w.id)
+            end
+        end
+    end
+    return { actions = actions, pending = pending }
 end
 
 return Chrome
