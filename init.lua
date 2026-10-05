@@ -28,6 +28,8 @@ local HAMMERSPOON_BUNDLE = "org.hammerspoon.Hammerspoon"
 local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
 local Chrome = dofile(hs.spoons.resourcePath("chrome.lua"))
+-- The label, Inbox and day pages, opened from here without the extension.
+local PAGES_DIR = hs.spoons.resourcePath("chrome-extension")
 
 local m = {}
 m.__index = m
@@ -67,27 +69,36 @@ m.chromeWindowMarkers = true
 -- space names are unchanged. A full pass still runs at least this often.
 m.chromeNamesFullInterval = 600
 -- With chromeWindowNames, a window named after a space also keeps a pinned
--- tab of the SpaceManager extension's label page (labelPage): its tab title
+-- tab of the label page (chrome-extension/label.html): its tab title
 -- is the window's name and its icon the space's number on the space's color,
 -- so a window shows which space it belongs to from inside Chrome. Renaming
 -- the space updates the tab; a window that loses the name loses the tab.
 -- Chrome only adds a tab to its front window, so a window still missing its
--- label gets it the next time it comes to the front. Needs the extension (see
--- inbox).
+-- label gets it the next time it comes to the front. The page and its
+-- pinning come from the extension, or from SpaceManager without it (see
+-- chromeExtension).
 m.chromeWindowLabels = false
-m.labelPage = "chrome-extension://jcabbbkgmcfmkekcjeokgbhniieojpgd/label.html"
 
 -- The Inbox: one Chrome window, named inboxName, that links land in (see
 -- linkRoutingNoChrome). It is opened when a link needs it and there is none,
--- with the SpaceManager Inbox extension's page as its first tab (inboxPage):
--- the extension keeps that tab pinned and puts every new tab in the window
--- into a group for the day it was opened, "📅 Sat, Oct 4". Load the extension
--- unpacked from this spoon's chrome-extension folder (it also draws the
--- chromeWindowLabels tabs). Its name is never
--- overwritten by chromeWindowNames.
+-- with the Inbox page as its first tab, pinned. Its name is never
+-- overwritten by chromeWindowNames. With the extension, every new tab in the
+-- window goes into a group for the day it was opened, "📅 Sat, Oct 4";
+-- without it, a link routed there on a new day first gets a "📅 Sat, Oct 4"
+-- divider tab (tabs opened in the window by hand get none).
 m.inbox = false
 m.inboxName = "📥 Inbox"
-m.inboxPage = "chrome-extension://jcabbbkgmcfmkekcjeokgbhniieojpgd/inbox.html"
+
+-- The SpaceManager Chrome extension (this spoon's chrome-extension folder,
+-- loaded unpacked) serves the label, Inbox and day pages, pins them, and
+-- groups the Inbox's tabs by day. Where Chrome extensions cannot be
+-- installed, set this false: the same pages open from this spoon's folder as
+-- file:// pages, SpaceManager pins them through Chrome's Tab > Pin Tab menu
+-- item (which takes Chrome being the active app, so a label waits for that),
+-- and the Inbox gets day divider tabs instead of groups. Label tabs made the
+-- other way are taken over when this changes.
+m.chromeExtension = true
+m.extensionId = "jcabbbkgmcfmkekcjeokgbhniieojpgd"
 
 -- Links clicked in other apps open in a Chrome window on the space showing,
 -- rather than in whichever window Chrome last used, which pulls the screen to
@@ -240,41 +251,37 @@ end
 
 -- Chrome window names ----------------------------------------------------
 
-local function jsString(str)
-    return '"' .. str:gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
-end
-
 function m:_chromeApp()
     return hsapplication.get("Google Chrome")
 end
 
 -- Chrome's own view of its windows, via scripting: id, title, givenName,
--- bounds {x, y, width, height}. With labelPage, also front (Chrome's front
--- window) and labels, the window's tabs showing that page {index=, url=}.
--- nil when Chrome is not running or refuses.
-function m:_chromeScriptWindows(labelPage)
+-- bounds {x, y, width, height}. With labelPages (urls), also front (Chrome's
+-- front window) and labels, the window's tabs showing one of those pages
+-- {index=, url=}. nil when Chrome is not running or refuses.
+function m:_chromeScriptWindows(labelPages)
     if not m:_chromeApp() then
         return nil
     end
     -- One Apple Event per property for all windows at once, not one per
     -- window: the cost stays flat however many windows are open.
     local ok, result = hsosascript.javascript(string.format([[
-        const labelPage = %s;
+        const labelPages = %s;
         const ws = Application("Google Chrome").windows;
         const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds();
-        const indexes = labelPage ? ws.index() : [], urls = labelPage ? ws.tabs.url() : [];
+        const indexes = labelPages ? ws.index() : [], urls = labelPages ? ws.tabs.url() : [];
         JSON.stringify(ids.map((id, i) => {
             const w = { id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i] };
-            if (labelPage) {
+            if (labelPages) {
                 w.front = indexes[i] === 1;
                 w.labels = [];
                 urls[i].forEach((url, t) => {
-                    if (url.startsWith(labelPage)) { w.labels.push({ index: t + 1, url: url }); }
+                    if (labelPages.some(p => url.startsWith(p))) { w.labels.push({ index: t + 1, url: url }); }
                 });
             }
             return w;
         }));
-    ]], labelPage and jsString(labelPage) or "false"))
+    ]], labelPages and hsjson.encode(labelPages) or "false"))
     if not ok then
         m.logger.w("Could not list Chrome windows", hsinspect(result))
         return nil
@@ -313,13 +320,21 @@ function m:_setChromeWindowNames(namesById)
     end
 end
 
--- Carry out Chrome.labelPlan's actions. Only ever touches tabs showing
--- labelPage, checked again here in case the tabs moved since they were read.
+-- The label page in both forms, the one in use first: a label tab made the
+-- other way is still a label, and is moved over to this way.
+function m:_labelPages()
+    return { m:_page("label.html"), m:_page("label.html", not m.chromeExtension) }
+end
+
+-- Carry out Chrome.labelPlan's actions. Only ever touches label tabs (see
+-- _labelPages), checked again here in case the tabs moved since they were
+-- read. Without the extension, a new label is pinned here.
 function m:_applyChromeLabels(actions)
     local ok, result = hsosascript.javascript(string.format([[
-        const [actions, labelPage] = %s;
+        const [actions, labelPages, pinHere] = %s;
         const c = Application("Google Chrome");
-        const isLabel = (tab) => tab.url().startsWith(labelPage);
+        const isLabel = (tab) => labelPages.some(p => tab.url().startsWith(p));
+        const added = [];
         actions.forEach(a => {
             try {
                 const w = c.windows.byId(Number(a.id));
@@ -331,16 +346,87 @@ function m:_applyChromeLabels(actions)
                 } else if (a.add && w.index() === 1) {
                     // Chrome makes a new tab in its front window whatever
                     // window it is aimed at: only the front window gets one.
-                    const active = w.activeTabIndex(), before = w.tabs.length;
+                    const active = w.activeTabIndex(), activeId = w.activeTab.id(), before = w.tabs.length;
                     w.tabs.push(c.Tab({ url: a.add }));
-                    if (w.tabs.length === before + 1) { w.activeTabIndex = active; }
+                    if (w.tabs.length === before + 1) {
+                        if (pinHere) {
+                            added.push({ id: a.id, tab: w.tabs[before].id(), active: activeId });
+                        } else {
+                            w.activeTabIndex = active;
+                        }
+                    }
                 }
             } catch (e) {}
         });
-        true;
-    ]], hsjson.encode({ actions, m.labelPage })))
+        JSON.stringify(added);
+    ]], hsjson.encode({ actions, m:_labelPages(), not m.chromeExtension })))
     if not ok then
         m.logger.w("Could not update Chrome label tabs", hsinspect(result))
+        return
+    end
+    m.logger.d("Chrome label tabs added", result)
+    for _, a in ipairs(hsjson.decode(result) or {}) do
+        m:_pinChromeTab(a.id, a.tab, a.active)
+    end
+end
+
+-- A page of the chrome-extension folder as Chrome should open it (see
+-- chromeExtension); extension, when given, picks the form instead.
+function m:_page(page, extension)
+    if extension == nil then
+        extension = m.chromeExtension
+    end
+    return Chrome.pageUrl(page, extension and m.extensionId or nil, PAGES_DIR)
+end
+
+local PIN_TAB = { "Tab", "Pin Tab" }
+m.pinTimers = {}
+
+-- Pin a tab without the extension. Chrome's Tab > Pin Tab pins the active tab
+-- of the front window, and only while Chrome is the active app: the tab is
+-- made active for the moment it takes, then restoreTab (a tab id, or nil) is
+-- made active again. Pin Tab is ticked while the active tab is pinned, so a
+-- pinned tab is never unpinned. Waits a couple of seconds for Chrome to
+-- become the active app (a new Inbox has only just asked it to).
+function m:_pinChromeTab(windowId, tabId, restoreTab, tries)
+    tries = tries or 10
+    m.pinTimers[tabId] = nil
+    local app = m:_chromeApp()
+    if not app then
+        return
+    end
+    if not app:isFrontmost() then
+        if tries > 0 then
+            m.pinTimers[tabId] = hstimer.doAfter(0.2, function()
+                m:_pinChromeTab(windowId, tabId, restoreTab, tries - 1)
+            end)
+        else
+            m.logger.w("Could not pin Chrome tab", tabId, "- Chrome is not the active app")
+        end
+        return
+    end
+    local function activate(id)
+        local ok, result = hsosascript.javascript(string.format([[
+            const [windowId, tabId] = %s;
+            const w = Application("Google Chrome").windows.byId(Number(windowId));
+            const i = w.tabs.id().map(String).indexOf(String(tabId));
+            const front = w.index() === 1 && i >= 0;
+            if (front) { w.activeTabIndex = i + 1; }
+            front;
+        ]], hsjson.encode({ windowId, id })))
+        return ok and result == true
+    end
+    if activate(tabId) then
+        local item = app:findMenuItem(PIN_TAB)
+        if item and not item.ticked then
+            app:selectMenuItem(PIN_TAB)
+            m.logger.d("Pinned Chrome tab", tabId)
+        end
+    else
+        m.logger.w("Could not pin Chrome tab", tabId, "- its window is no longer in front")
+    end
+    if restoreTab ~= nil then
+        activate(restoreTab)
     end
 end
 
@@ -362,7 +448,7 @@ function m:_labelUrls(names)
         local name = names[spaceId]
         if name ~= nil then
             local color = m:_getSpaceColor(index)
-            urls[name] = string.format("%s?name=%s&n=%02d&bg=%s&fg=%s", m.labelPage, urlEncode(name), index,
+            urls[name] = string.format("%s?name=%s&n=%02d&bg=%s&fg=%s", m:_page("label.html"), urlEncode(name), index,
                 hexColor(color), hexColor(m:_getContrastingTextColor(color)))
         end
     end
@@ -430,7 +516,7 @@ function m:reconcileChromeWindows(force)
     m.chromeSettled = nil
 
     local app = m:_chromeApp()
-    local scripted = app and m:_chromeScriptWindows(m.chromeWindowLabels and m.labelPage or nil)
+    local scripted = app and m:_chromeScriptWindows(m.chromeWindowLabels and m:_labelPages() or nil)
     if not scripted then
         return
     end
@@ -449,7 +535,10 @@ function m:reconcileChromeWindows(force)
         end
         local windows = {}
         for _, w in ipairs(scripted) do
-            table.insert(windows, { id = w.id, givenName = renamed[w.id] or w.givenName, front = w.front,
+            -- Without the extension a new label is pinned through Chrome's
+            -- menu bar, which only works while Chrome is the active app.
+            local front = w.front and (m.chromeExtension or app:isFrontmost())
+            table.insert(windows, { id = w.id, givenName = renamed[w.id] or w.givenName, front = front,
                 labels = w.labels })
         end
         local labelPlan = Chrome.labelPlan(windows, m:_labelUrls(names))
@@ -548,22 +637,32 @@ function m:_routeLink(url)
     end
     local target = id and { id = id, window = route.pair and route.pair.hs.window }
     local newInbox = route.inbox and target == nil
+    -- Without the extension to group the Inbox's tabs by day, a link there
+    -- on a new day comes after a divider tab for the day.
+    local divider = false
+    if route.inbox and not m.chromeExtension then
+        local day = Chrome.dayDivider(os.date("*t"))
+        divider = string.format("%s?name=%s&n=%s&bg=%s&fg=%s", m:_page("day.html"), urlEncode(day.title), day.n,
+            day.bg, day.fg)
+    end
 
     -- A new Chrome window opens on the space showing.
     local ok, result = hsosascript.javascript(string.format([[
-        const [url, id, inboxName, inboxPage] = %s;
+        const [url, id, inboxName, inboxPage, divider] = %s;
         const c = Application("Google Chrome");
+        const addDivider = (w) => {
+            if (divider && !w.tabs.url().includes(divider)) { w.tabs.push(c.Tab({ url: divider })); }
+        };
+        let made = null;
         if (id === false) {
             const w = c.Window().make();
             if (inboxName) {
                 w.givenName = inboxName;
-                if (inboxPage) {
-                    w.activeTab.url = inboxPage;
-                    w.tabs.push(c.Tab({ url: url }));
-                    w.activeTabIndex = w.tabs.length;
-                } else {
-                    w.activeTab.url = url;
-                }
+                w.activeTab.url = inboxPage;
+                made = { id: String(w.id()), inboxTab: w.activeTab.id() };
+                addDivider(w);
+                w.tabs.push(c.Tab({ url: url }));
+                w.activeTabIndex = w.tabs.length;
             } else {
                 w.activeTab.url = url;
             }
@@ -575,14 +674,25 @@ function m:_routeLink(url)
             // confirm the tab landed there.
             const w = c.windows.byId(Number(id));
             w.index = 1;
+            addDivider(w);
             const before = w.tabs.length;
             w.tabs.push(c.Tab({ url: url }));
             if (w.tabs.length !== before + 1) { throw new Error("tab not added to window " + id); }
             w.activeTabIndex = w.tabs.length;
         }
-        true;
+        JSON.stringify(made || {});
     ]], hsjson.encode({ url, target and target.id or false,
-        newInbox and m.inboxName or false, newInbox and m.inboxPage or false })))
+        newInbox and m.inboxName or false, m:_page("inbox.html"), divider })))
+    if ok and not m.chromeExtension then
+        -- The new Inbox's own tab, pinned once Chrome is the active app; the
+        -- link stays the tab showing.
+        local made = hsjson.decode(result)
+        if made and made.id then
+            local okActive, active = hsosascript.javascript(string.format(
+                [[Application("Google Chrome").windows.byId(%s).activeTab.id();]], made.id))
+            m:_pinChromeTab(made.id, made.inboxTab, okActive and active or nil)
+        end
+    end
     if not ok then
         -- routeLink hands it to Chrome; if a tab did land in another window,
         -- the link ends up open twice rather than not at all.
