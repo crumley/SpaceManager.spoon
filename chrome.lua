@@ -142,6 +142,12 @@ local function movedName(current, target)
     return cr == tr or cr:match("^(.-) %d+$") == tr
 end
 
+-- Whether current is target, a numbered further window of it ("🟥 01 -
+-- Today 2"), or target from before its space moved.
+local function ownName(current, target)
+    return current == target or current:match("^(.-) %d+$") == target or movedName(current, target)
+end
+
 -- Decide renames.
 --   pairs_:         from matchWindows; each hs window carries `spaces` (list of ids)
 --   spaceNames:     spaceId -> the name its windows should carry (see
@@ -150,6 +156,11 @@ end
 --   allWindows:     every Chrome scripting window, matched or not, so a new
 --                   name never repeats one already in use (defaults to pairs_)
 --   keepNames:      set (name -> true) of names never touched, like the Inbox's
+--   inbox:          {name=, spaceId=}, or nil: while no window anywhere is
+--                   named name, the oldest window on spaceId that is unnamed
+--                   or carries that space's name is named name instead, so
+--                   the Inbox is made there rather than another
+--                   "🟥 01 - Today"
 -- A window that already has a name keeps it -- whoever gave it, and wherever
 -- it has moved -- unless its space was renamed: then every window on that
 -- space takes the new name, or loses its name if the space's was cleared.
@@ -159,13 +170,40 @@ end
 -- touched. A second window wanting a name
 -- already in use gets " 2", then " 3", and so on.
 -- Returns a list of {id=<chrome id>, name=<new given name>} ("" clears).
-function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames)
+function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames, inbox)
     keepNames = keepNames or {}
+    if allWindows == nil then
+        allWindows = {}
+        for _, p in ipairs(pairs_) do
+            table.insert(allWindows, p.chrome)
+        end
+    end
+
+    local newInbox
+    if inbox ~= nil and inbox.spaceId ~= nil then
+        local exists = false
+        for _, cw in ipairs(allWindows) do
+            if cw.givenName == inbox.name then
+                exists = true
+            end
+        end
+        local target = spaceNames[inbox.spaceId]
+        for _, p in ipairs(pairs_) do
+            local current = p.chrome.givenName or ""
+            local spaceId = p.hs.spaces and p.hs.spaces[1]
+            if not exists and spaceId == inbox.spaceId and
+                (current == "" or (target ~= nil and ownName(current, target))) and
+                (newInbox == nil or byId(p, newInbox)) then
+                newInbox = p
+            end
+        end
+    end
+
     local wanting = {}
     for _, p in ipairs(pairs_) do
         local current = p.chrome.givenName or ""
         local spaceId = p.hs.spaces and p.hs.spaces[1]
-        if spaceId ~= nil and not Chrome.isDateName(current) and not keepNames[current] then
+        if p ~= newInbox and spaceId ~= nil and not Chrome.isDateName(current) and not keepNames[current] then
             if renamedSpaces[spaceId] then
                 table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
             elseif current == "" and spaceNames[spaceId] ~= nil then
@@ -180,13 +218,12 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames)
     for _, w in ipairs(wanting) do
         renaming[w.pair.chrome.id] = true
     end
-    local taken = {}
-    if allWindows == nil then
-        allWindows = {}
-        for _, p in ipairs(pairs_) do
-            table.insert(allWindows, p.chrome)
-        end
+    local changes = {}
+    if newInbox ~= nil then
+        renaming[newInbox.chrome.id] = true
+        table.insert(changes, { id = newInbox.chrome.id, name = inbox.name })
     end
+    local taken = {}
     for _, cw in ipairs(allWindows) do
         if not renaming[cw.id] and cw.givenName and cw.givenName ~= "" then
             taken[cw.givenName] = true
@@ -196,7 +233,6 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames)
     table.sort(wanting, function(a, b)
         return byId(a.pair, b.pair)
     end)
-    local changes = {}
     for _, w in ipairs(wanting) do
         local current = w.pair.chrome.givenName or ""
         local name = ""

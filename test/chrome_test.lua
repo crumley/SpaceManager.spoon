@@ -185,6 +185,36 @@ describe("Chrome.plan", function()
         assert.are.same({}, Chrome.plan({ pair("1", "05 - Planning ahead", 3) }, names, none))
     end)
 
+    describe("with an Inbox space", function()
+        local inbox = { name = "📥 Inbox", spaceId = 1 }
+        local keep = { ["📥 Inbox"] = true }
+
+        it("makes the oldest window there the Inbox while there is none", function()
+            local changes = Chrome.plan({ pair("7", "01 - Today", 1), pair("5", "", 1) }, names, none, nil, keep, inbox)
+            assert.are.same({ { id = "5", name = "📥 Inbox" } }, changes)
+        end)
+
+        it("turns the space's named window into the Inbox", function()
+            local changes = Chrome.plan({ pair("7", "01 - Today", 1) }, names, none, nil, keep, inbox)
+            assert.are.same({ { id = "7", name = "📥 Inbox" } }, changes)
+        end)
+
+        it("names the space's other windows as before", function()
+            local changes = Chrome.plan({ pair("1", "", 1), pair("2", "", 1) }, names, none, nil, keep, inbox)
+            assert.are.same({ { id = "1", name = "📥 Inbox" }, { id = "2", name = "01 - Today" } }, changes)
+        end)
+
+        it("leaves everything once an Inbox exists, wherever it is", function()
+            local all = { { id = "7", givenName = "01 - Today" }, { id = "9", givenName = "📥 Inbox" } }
+            assert.are.same({}, Chrome.plan({ pair("7", "01 - Today", 1) }, names, none, all, keep, inbox))
+        end)
+
+        it("never takes a window someone else named, or one on another space", function()
+            assert.are.same({}, Chrome.plan({ pair("1", "Taxes", 1) }, names, none, nil, keep, inbox))
+            assert.are.same({}, Chrome.plan({ pair("1", "03 - Planning", 3) }, names, none, nil, keep, inbox))
+        end)
+    end)
+
     it("does nothing for a window on no known space", function()
         assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, none))
     end)
@@ -288,6 +318,16 @@ end)
 
 describe("Chrome.labelPlan", function()
     local urls = { ["🟥 01 - Today"] = "L?today", ["🟦 02 - Work"] = "L?work" }
+
+    it("turns the label of a window just made the Inbox into the Inbox page", function()
+        local withInbox = { ["🟥 01 - Today"] = "L?today", ["📥 Inbox"] = "I" }
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "📥 Inbox", front = false,
+            labels = { { index = 1, url = "L?today" } } } }, withInbox)
+        assert.are.same({ { id = "1", set = { index = 1, url = "I" } } }, plan.actions)
+        local settled = Chrome.labelPlan({ { id = "1", givenName = "📥 Inbox", front = true,
+            labels = { { index = 1, url = "I" } } } }, withInbox)
+        assert.are.same({}, settled.actions)
+    end)
 
     it("adds a label to a named front window", function()
         local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today", front = true, labels = {} } }, urls)
