@@ -325,6 +325,15 @@ describe("Chrome.labelPlan", function()
         assert.are.same({ { id = "1", close = { 1 } }, { id = "2", close = { 3 } } }, plan.actions)
     end)
 
+    it("leaves the label of a window named for where its space used to be", function()
+        -- Work moved from fourth to second; the window is renamed (and its
+        -- label pointed at the new name) once its space is showing.
+        local plan = Chrome.labelPlan({ { id = "1", givenName = "🟩 04 - Work", front = true,
+            labels = { { index = 1, url = "L?work4" } } } }, urls)
+        assert.are.same({}, plan.actions)
+        assert.are.same({}, plan.pending)
+    end)
+
     it("keeps the right one of several labels and closes the rest", function()
         local plan = Chrome.labelPlan({ { id = "1", givenName = "🟥 01 - Today", labels = {
             { index = 1, url = "L?old" }, { index = 2, url = "L?today" }, { index = 5, url = "L?today" } } } }, urls)

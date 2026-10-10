@@ -307,6 +307,10 @@ end
 -- "🟥 01 - Today 2" for a second window) keeps one tab of the extension's
 -- label page showing that space, so the window says whose it is from inside
 -- Chrome too. A window with any other name, or none, keeps no label tab.
+-- A window still carrying a space name no space has now ("🟩 04 - ws/main"
+-- just after its space moved to second) is waiting for plan to rename it,
+-- which happens once its space is showing: its labels are left as they are
+-- until then, not closed and later added again.
 --   windows:   { {id=, givenName=, front=<bool>, labels={ {index=, url=}, ... }}, ... }
 --              labels: the window's label tabs (1-based tab index, current url)
 --   labelUrls: space window name -> the label page url for that space
@@ -330,6 +334,9 @@ function Chrome.labelPlan(windows, labelUrls)
     for _, w in ipairs(windows) do
         local url = wanted(w.givenName)
         local labels = w.labels or {}
+        if url == nil and w.givenName ~= nil and nameParts(w.givenName) ~= nil then
+            goto continue
+        end
         local keep -- the label tab that stays, preferring one already right
         if url ~= nil then
             for _, l in ipairs(labels) do
@@ -368,6 +375,7 @@ function Chrome.labelPlan(windows, labelUrls)
                 table.insert(pending, w.id)
             end
         end
+        ::continue::
     end
     return { actions = actions, pending = pending }
 end
