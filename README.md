@@ -49,7 +49,11 @@ Chrome windows named after the space they are on.
   yourself get none). When a link needs the Inbox and there is none, a new
   one opens on the space showing, its first tab the Inbox page
   (`chrome-extension/inbox.html`, pinned, its tab showing 📥). Its name is
-  never overwritten by Chrome window names.
+  never overwritten by Chrome window names. With `inboxSpace` set to a
+  space's position (`1` for the first), the Inbox is also made there: while
+  there is none, the oldest Chrome window on that space becomes the Inbox
+  instead of taking the space's name, and its label tab becomes the Inbox
+  page. A window you name `📥 Inbox` yourself gets the Inbox page too.
 - **The SpaceManager Chrome extension** (`chromeExtension`, on by default).
   The label, Inbox and day pages live in `chrome-extension/`, which is also a
   Chrome extension that serves them, pins them, and groups the Inbox's tabs by
@@ -94,6 +98,7 @@ spoon.SpaceManager.chromeWindowNames = true
 spoon.SpaceManager.chromeWindowLabels = true
 spoon.SpaceManager.linkRouting = true
 spoon.SpaceManager.inbox = true
+spoon.SpaceManager.inboxSpace = 1
 spoon.SpaceManager.linkRoutingNoChrome = "inbox"
 -- spoon.SpaceManager.chromeExtension = false -- where the extension cannot be installed
 spoon.SpaceManager:start()

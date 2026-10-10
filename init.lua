@@ -88,6 +88,13 @@ m.chromeWindowLabels = false
 -- divider tab (tabs opened in the window by hand get none).
 m.inbox = false
 m.inboxName = "📥 Inbox"
+-- The position of a space the Inbox is made on (1 for the first), or nil.
+-- With chromeWindowNames on and no Inbox anywhere, the oldest Chrome window
+-- on that space becomes the Inbox instead of taking the space's name -- so
+-- "🟥 01 - Today" turns into the Inbox, and the space's other windows keep
+-- its name. Its label tab, if it has one, becomes the Inbox page. Close the
+-- Inbox and the next window there becomes it.
+m.inboxSpace = nil
 
 -- The SpaceManager Chrome extension (this spoon's chrome-extension folder,
 -- loaded unpacked) serves the label, Inbox and day pages, pins them, and
@@ -321,9 +328,22 @@ function m:_setChromeWindowNames(namesById)
 end
 
 -- The label page in both forms, the one in use first: a label tab made the
--- other way is still a label, and is moved over to this way.
+-- other way is still a label, and is moved over to this way. With the Inbox
+-- on, the Inbox page counts as a label too: it is the Inbox's label, kept by
+-- the same pass (see _labelUrls).
 function m:_labelPages()
-    return { m:_page("label.html"), m:_page("label.html", not m.chromeExtension) }
+    local pages = {}
+    local function add(page)
+        table.insert(pages, m:_page(page))
+        table.insert(pages, m:_page(page, not m.chromeExtension))
+    end
+    if m.chromeWindowLabels then
+        add("label.html")
+    end
+    if m.inbox then
+        add("inbox.html")
+    end
+    return pages
 end
 
 -- Carry out Chrome.labelPlan's actions. Only ever touches label tabs (see
@@ -441,12 +461,16 @@ local function hexColor(color)
         math.floor(color.blue * 255 + 0.5))
 end
 
--- The label page url for each space window name (see chromeWindowLabels).
+-- The label page url for each space window name (see chromeWindowLabels),
+-- and the Inbox page for the Inbox's name.
 function m:_labelUrls(names)
     local urls = {}
+    if m.inbox then
+        urls[m.inboxName] = m:_page("inbox.html")
+    end
     for index, spaceId in ipairs(m:_getAllSpaces() or {}) do
         local name = names[spaceId]
-        if name ~= nil then
+        if name ~= nil and m.chromeWindowLabels then
             local color = m:_getSpaceColor(index)
             urls[name] = string.format("%s?name=%s&n=%02d&bg=%s&fg=%s", m:_page("label.html"), urlEncode(name), index,
                 hexColor(color), hexColor(m:_getContrastingTextColor(color)))
@@ -516,18 +540,19 @@ function m:reconcileChromeWindows(force)
     m.chromeSettled = nil
 
     local app = m:_chromeApp()
-    local scripted = app and m:_chromeScriptWindows(m.chromeWindowLabels and m:_labelPages() or nil)
+    local labelling = m.chromeWindowLabels or m.inbox
+    local scripted = app and m:_chromeScriptWindows(labelling and m:_labelPages() or nil)
     if not scripted then
         return
     end
     local names = m:_spaceNames()
     local hsWindows = m:_chromeHsWindows(app)
     local pairs_ = Chrome.matchWindows(scripted, hsWindows)
-    local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted, m:_keepNames())
+    local changes = Chrome.plan(pairs_, names, m.renamedSpaces, scripted, m:_keepNames(), m:_inboxPlace())
     m.renamedSpaces = {}
 
     local labelActions = {}
-    if m.chromeWindowLabels then
+    if labelling then
         -- Labels follow the names this pass leaves each window with.
         local renamed = {}
         for _, change in ipairs(changes) do
@@ -602,6 +627,15 @@ function m:routeLink(url)
     if not (ok and routed) then
         m:_openInChrome(url)
     end
+end
+
+-- Where Chrome.plan makes the Inbox (see inboxSpace), or nil.
+function m:_inboxPlace()
+    if not (m.inbox and m.inboxSpace) then
+        return nil
+    end
+    local spaceId = (m:_getAllSpaces() or {})[m.inboxSpace]
+    return spaceId and { name = m.inboxName, spaceId = spaceId } or nil
 end
 
 -- Names chromeWindowNames never overwrites.
