@@ -109,9 +109,16 @@ hs.hotkey.bind({"ctrl", "cmd", "option"}, "G", function() spoon.SpaceManager:sho
 ## Development
 
 The pure modules (`chrome.lua`: pairing Chrome's scripting windows with
-Hammerspoon's and deciding names; `state.lua`: persisted space names) are unit
-tested under plain Lua; `init.lua` talks to Hammerspoon and Chrome and is
-exercised in Hammerspoon by hand.
+Hammerspoon's and deciding names; `state.lua`: persisted space names;
+`jxa.lua`: running JavaScript for Automation) are unit tested under plain Lua;
+`init.lua` talks to Hammerspoon and Chrome and is exercised in Hammerspoon by
+hand.
+
+Chrome is scripted with JXA through `jxa.lua`, which runs each script in its
+own `osascript` process. Do not use `hs.osascript.javascript` here: it runs
+JXA inside Hammerspoon and keeps each run's JavaScriptCore heap, about 1.5 MB
+per pass over Chrome's windows, so the timers grow Hammerspoon by gigabytes
+over a couple of weeks.
 
 ```
 mise install      # actionlint
