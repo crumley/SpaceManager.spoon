@@ -28,6 +28,14 @@ local HAMMERSPOON_BUNDLE = "org.hammerspoon.Hammerspoon"
 local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
 local Chrome = dofile(hs.spoons.resourcePath("chrome.lua"))
+local Jxa = dofile(hs.spoons.resourcePath("jxa.lua"))
+
+-- JXA for Chrome runs in its own osascript process, never through
+-- hs.osascript.javascript, whose JavaScriptCore heap stays in Hammerspoon
+-- after every run (see jxa.lua). Same ok, result as that function.
+local function javascript(script)
+    return Jxa.run(script, { decode = hsjson.decode })
+end
 -- The label, Inbox and day pages, opened from here without the extension.
 local PAGES_DIR = hs.spoons.resourcePath("chrome-extension")
 
@@ -272,7 +280,7 @@ function m:_chromeScriptWindows(labelPages)
     end
     -- One Apple Event per property for all windows at once, not one per
     -- window: the cost stays flat however many windows are open.
-    local ok, result = hsosascript.javascript(string.format([[
+    local ok, result = javascript(string.format([[
         const labelPages = %s;
         const ws = Application("Google Chrome").windows;
         const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds();
@@ -316,7 +324,7 @@ function m:_chromeHsWindows(app)
 end
 
 function m:_setChromeWindowNames(namesById)
-    local ok, result = hsosascript.javascript(string.format([[
+    local ok, result = javascript(string.format([[
         const names = %s;
         const ws = Application("Google Chrome").windows;
         Object.keys(names).forEach(id => { ws.byId(Number(id)).givenName = names[id]; });
@@ -350,7 +358,7 @@ end
 -- _labelPages), checked again here in case the tabs moved since they were
 -- read. Without the extension, a new label is pinned here.
 function m:_applyChromeLabels(actions)
-    local ok, result = hsosascript.javascript(string.format([[
+    local ok, result = javascript(string.format([[
         const [actions, labelPages, pinHere] = %s;
         const c = Application("Google Chrome");
         const isLabel = (tab) => labelPages.some(p => tab.url().startsWith(p));
@@ -426,7 +434,7 @@ function m:_pinChromeTab(windowId, tabId, restoreTab, tries)
         return
     end
     local function activate(id)
-        local ok, result = hsosascript.javascript(string.format([[
+        local ok, result = javascript(string.format([[
             const [windowId, tabId] = %s;
             const w = Application("Google Chrome").windows.byId(Number(windowId));
             const i = w.tabs.id().map(String).indexOf(String(tabId));
@@ -681,7 +689,7 @@ function m:_routeLink(url)
     end
 
     -- A new Chrome window opens on the space showing.
-    local ok, result = hsosascript.javascript(string.format([[
+    local ok, result = javascript(string.format([[
         const [url, id, inboxName, inboxPage, divider] = %s;
         const c = Application("Google Chrome");
         const addDivider = (w) => {
@@ -722,7 +730,7 @@ function m:_routeLink(url)
         -- link stays the tab showing.
         local made = hsjson.decode(result)
         if made and made.id then
-            local okActive, active = hsosascript.javascript(string.format(
+            local okActive, active = javascript(string.format(
                 [[Application("Google Chrome").windows.byId(%s).activeTab.id();]], made.id))
             m:_pinChromeTab(made.id, made.inboxTab, okActive and active or nil)
         end
