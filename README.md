@@ -114,6 +114,12 @@ Hammerspoon's and deciding names; `state.lua`: persisted space names;
 `init.lua` talks to Hammerspoon and Chrome and is exercised in Hammerspoon by
 hand.
 
+Space names are saved by each space's uuid, not its id. macOS's space ids
+(`ManagedSpaceID`) last one login: after a reboot it numbers the spaces
+afresh, left to right, so a name saved by id lands on whichever space now has
+that number. `State:attach` matches saved names back to the spaces there are
+now by uuid, on start, on each space change and before each save.
+
 Chrome is scripted with JXA through `jxa.lua`, which runs each script in its
 own `osascript` process. Do not use `hs.osascript.javascript` here: it runs
 JXA inside Hammerspoon and keeps each run's JavaScriptCore heap, about 1.5 MB

@@ -1136,6 +1136,9 @@ function m:_saveState()
         m.canvas[2].textColor = textColor
     end
 
+    -- Stamp every record with its space's uuid before it is written, so the
+    -- names find their spaces again after a reboot.
+    m:_attachSpaces()
     local stateTable = m.state:toTable()
 
     m.logger.d("Saving state", hsinspect(stateTable))
@@ -1152,15 +1155,43 @@ function m:_restoreState()
         local state = State.fromTable(stateTable)
         if state ~= nil then
             m.state = state
+        end
+    end
+    -- Saved ids are from the login that saved them: after a reboot they name
+    -- other spaces. Match the records back to their spaces by uuid, and
+    -- save them so: state saved before uuids were kept is stamped at once.
+    m:_saveState()
+end
 
-            -- Ensure all current spaces are registered in state
-            local allSpaces = hsspaces.spacesForScreen("primary")
-            for i, spaceId in ipairs(allSpaces) do
-                if m.state:getSpaceById(spaceId) == nil then
-                    m.state:spaceAdded(spaceId, i)
+-- Every space on every display, in order, with its uuid: { {id=, uuid=,
+-- index=}, ... }, index counting from 1 on each display. Without the
+-- display data, the primary screen's spaces, with no uuids.
+function m:_currentSpaces()
+    local ok, displays = pcall(hsspaces.data_managedDisplaySpaces)
+    local current = {}
+    if ok and type(displays) == "table" then
+        for _, display in ipairs(displays) do
+            for i, space in ipairs(display.Spaces or {}) do
+                if space.ManagedSpaceID ~= nil then
+                    table.insert(current, { id = space.ManagedSpaceID, uuid = space.uuid, index = i })
                 end
             end
         end
+    end
+    if #current == 0 then
+        for i, spaceId in ipairs(m:_getAllSpaces() or {}) do
+            table.insert(current, { id = spaceId, index = i })
+        end
+    end
+    return current
+end
+
+function m:_attachSpaces()
+    local ok, err = pcall(function()
+        m.state:attach(m:_currentSpaces())
+    end)
+    if not ok then
+        m.logger.e("Could not attach spaces:", err)
     end
 end
 
@@ -1264,6 +1295,8 @@ function m:_onSpaceChanged(checkTwice)
     end
 
     if checkTwice then
+        -- Spaces added, removed or reordered show up here first.
+        m:_attachSpaces()
         m:_scheduleReconcile(1)
     end
 
