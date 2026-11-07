@@ -131,6 +131,9 @@ m.linkRoutingNoChrome = "newWindow"
 -- Spaces renamed or cleared since the last Chrome pass (spaceId -> true):
 -- every window on them takes the new name, whatever it was called before.
 m.renamedSpaces = {}
+-- Chrome window ids (strings) found to take no new tabs -- popups: set by
+-- _applyChromeLabels, and from then on left out of every Chrome pass.
+m.chromeTabless = {}
 
 local actions = {
     rename = function(choice)
@@ -273,7 +276,9 @@ end
 -- Chrome's own view of its windows, via scripting: id, title, givenName,
 -- bounds {x, y, width, height}. With labelPages (urls), also front (Chrome's
 -- front window) and labels, the window's tabs showing one of those pages
--- {index=, url=}. nil when Chrome is not running or refuses.
+-- {index=, url=}. nil when Chrome is not running or refuses. Incognito
+-- windows, and windows found to take no tabs (see chromeTabless), are left
+-- out: SpaceManager never names, labels or routes links to them.
 function m:_chromeScriptWindows(labelPages)
     if not m:_chromeApp() then
         return nil
@@ -283,9 +288,10 @@ function m:_chromeScriptWindows(labelPages)
     local ok, result = javascript(string.format([[
         const labelPages = %s;
         const ws = Application("Google Chrome").windows;
-        const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds();
+        const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds(), modes = ws.mode();
         const indexes = labelPages ? ws.index() : [], urls = labelPages ? ws.tabs.url() : [];
-        JSON.stringify(ids.map((id, i) => {
+        JSON.stringify(ids.flatMap((id, i) => modes[i] === "incognito" ? [] : [i]).map(i => {
+            const id = ids[i];
             const w = { id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i] };
             if (labelPages) {
                 w.front = indexes[i] === 1;
@@ -301,7 +307,13 @@ function m:_chromeScriptWindows(labelPages)
         m.logger.w("Could not list Chrome windows", hsinspect(result))
         return nil
     end
-    return hsjson.decode(result)
+    local windows = {}
+    for _, w in ipairs(hsjson.decode(result) or {}) do
+        if not m.chromeTabless[w.id] then
+            table.insert(windows, w)
+        end
+    end
+    return windows
 end
 
 -- Hammerspoon's view of the same windows, with the spaces each is on.
@@ -357,12 +369,18 @@ end
 -- Carry out Chrome.labelPlan's actions. Only ever touches label tabs (see
 -- _labelPages), checked again here in case the tabs moved since they were
 -- read. Without the extension, a new label is pinned here.
+--
+-- A popup window takes no new tabs: Chrome opens the tab in a normal window
+-- instead and brings that one to the front, burying the popup. Chrome's
+-- scripting cannot tell a popup from any other window, so this is how one is
+-- found: the stray tab is closed again, the popup put back in front and its
+-- name cleared, and the window is left alone from then on (chromeTabless).
 function m:_applyChromeLabels(actions)
     local ok, result = javascript(string.format([[
         const [actions, labelPages, pinHere] = %s;
         const c = Application("Google Chrome");
         const isLabel = (tab) => labelPages.some(p => tab.url().startsWith(p));
-        const added = [];
+        const added = [], tabless = [];
         actions.forEach(a => {
             try {
                 const w = c.windows.byId(Number(a.id));
@@ -382,18 +400,29 @@ function m:_applyChromeLabels(actions)
                         } else {
                             w.activeTabIndex = active;
                         }
+                    } else {
+                        const front = c.windows[0];
+                        if (front.id() !== w.id() && front.activeTab.url() === a.add) { front.activeTab.close(); }
+                        w.givenName = "";
+                        w.index = 1;
+                        tabless.push(a.id);
                     }
                 }
             } catch (e) {}
         });
-        JSON.stringify(added);
+        JSON.stringify({ added, tabless });
     ]], hsjson.encode({ actions, m:_labelPages(), not m.chromeExtension })))
     if not ok then
         m.logger.w("Could not update Chrome label tabs", hsinspect(result))
         return
     end
-    m.logger.d("Chrome label tabs added", result)
-    for _, a in ipairs(hsjson.decode(result) or {}) do
+    m.logger.d("Chrome label tabs", result)
+    result = hsjson.decode(result) or {}
+    for _, id in ipairs(result.tabless or {}) do
+        m.logger.i("Chrome window", id, "takes no tabs (a popup): leaving it alone")
+        m.chromeTabless[id] = true
+    end
+    for _, a in ipairs(result.added or {}) do
         m:_pinChromeTab(a.id, a.tab, a.active)
     end
 end
