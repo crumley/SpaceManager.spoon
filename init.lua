@@ -29,6 +29,7 @@ local State = dofile(hs.spoons.resourcePath("state.lua"))
 local Menu = dofile(hs.spoons.resourcePath("menu.lua"))
 local Chrome = dofile(hs.spoons.resourcePath("chrome.lua"))
 local Jxa = dofile(hs.spoons.resourcePath("jxa.lua"))
+local MissionControl = dofile(hs.spoons.resourcePath("mission_control.lua"))
 
 -- JXA for Chrome runs in its own osascript process, never through
 -- hs.osascript.javascript, whose JavaScriptCore heap stays in Hammerspoon
@@ -50,6 +51,15 @@ m.license = "MIT"
 m.homepage = "https://github.com/Hammerspoon/Spoons"
 
 m.logger = hslogger.new('SpaceManager', 'debug')
+m.missionControl = MissionControl.new({
+    applicationElement = function(bundle)
+        local app = hsapplication.get(bundle)
+        return app and hsaxuielement.applicationElement(app)
+    end,
+    spaces = hsspaces,
+    screens = hsscreen,
+    timer = hstimer
+})
 
 -- Settings
 m.settingsKey = m.name .. ".state"
@@ -149,7 +159,7 @@ local actions = {
     end,
 
     gotoSpace = function(choice)
-        hsspaces.gotoSpace(choice.spaceId)
+        m:gotoSpace(choice.spaceId)
     end
 }
 
@@ -818,18 +828,30 @@ end
 -- a window to a space. The bar itself is left alone so its previews still
 -- expand on hover. Calling it again while open closes both. Mission Control
 -- opened any other way (hot corner, F3, a swipe) shows no legend.
+function m:gotoSpace(spaceId)
+    local function report(ok, err)
+        if not ok then
+            m.logger.e("Could not switch space:", err)
+            hsnotify.new({ title = "SpaceManager", informativeText = tostring(err) }):send()
+        end
+    end
+    local ok, err = m.missionControl:gotoSpace(spaceId, report)
+    if not ok then report(ok, err) end
+    return ok, err
+end
+
 function m:toggleMissionControl()
+    m.missionControl:cancelSwitch()
     if m.legendCanvas then
         m:_hideLegend()
-        hsspaces.closeMissionControl()
+        m.missionControl:close()
         return
     end
     m:_showLegend()
-    hsspaces.openMissionControl()
-    -- Nothing reports Mission Control opening or closing, but while it is
-    -- open the Dock's accessibility tree holds an element with id "mc". Watch
-    -- for it only while the legend is up: it goes when Mission Control does,
-    -- however that is closed, or if Mission Control never opened.
+    m.missionControl:open()
+    -- Watch both accessibility layouts (Dock before macOS 27,
+    -- WindowManager since then), only while the legend is up. It goes when
+    -- Mission Control closes, however that is closed, or never opens.
     local seen, started = false, hstimer.secondsSinceEpoch()
     m.legendPoll = hstimer.doEvery(0.15, function()
         if m:_missionControlOpen() then
@@ -841,19 +863,7 @@ function m:toggleMissionControl()
 end
 
 function m:_missionControlOpen()
-    local dock = hsapplication.get("com.apple.dock")
-    if not dock then
-        return false
-    end
-    local ok, children = pcall(function()
-        return hsaxuielement.applicationElement(dock):attributeValue("AXChildren")
-    end)
-    for _, child in ipairs(ok and children or {}) do
-        if child:attributeValue("AXIdentifier") == "mc" then
-            return true
-        end
-    end
-    return false
+    return m.missionControl:isOpen()
 end
 
 -- One lozenge per space, in the desktop lozenge's colors and font, stacked
