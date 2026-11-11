@@ -17,6 +17,13 @@ Chrome windows named after the space they are on.
   Calling it again closes both; closing Mission Control any other way removes
   the legend. Mission Control opened by a hot corner, F3 or a swipe shows no
   legend.
+- **Space switching** from the menu (`show()`) or `gotoSpace(spaceId)`.
+  Uses Mission Control's accessibility buttons, waits asynchronously for them
+  to appear, and reports a failure rather than silently leaving Mission
+  Control open. The legend and switching support both the Dock accessibility
+  tree (older macOS) and WindowManager (macOS 27+), without modifying
+  Hammerspoon's `hs.spaces` module. This works around
+  [Hammerspoon #3897](https://github.com/Hammerspoon/hammerspoon/issues/3897).
 - **Dock on the first space only** (`dockOnPrimaryOnly`).
 - **Chrome window names** (`chromeWindowNames`). An unnamed Chrome window
   takes the position and name of the space it is on, led by a colored square
@@ -110,9 +117,10 @@ hs.hotkey.bind({"ctrl", "cmd", "option"}, "G", function() spoon.SpaceManager:sho
 
 The pure modules (`chrome.lua`: pairing Chrome's scripting windows with
 Hammerspoon's and deciding names; `state.lua`: persisted space names;
-`jxa.lua`: running JavaScript for Automation) are unit tested under plain Lua;
-`init.lua` talks to Hammerspoon and Chrome and is exercised in Hammerspoon by
-hand.
+`jxa.lua`: running JavaScript for Automation) are unit tested under plain Lua.
+`mission_control.lua` is tested with injected accessibility and timer fakes
+for both macOS layouts, delayed trees and switch failures. `init.lua` talks
+to Hammerspoon and Chrome and is exercised in Hammerspoon by hand.
 
 Space names are saved by each space's uuid, not its id. macOS's space ids
 (`ManagedSpaceID`) last one login: after a reboot it numbers the spaces
