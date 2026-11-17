@@ -148,6 +148,14 @@ local function ownName(current, target)
     return current == target or current:match("^(.-) %d+$") == target or movedName(current, target)
 end
 
+-- A window needs exactly one home before its space can name it. Floating
+-- PiP windows can be reported on every desktop (in reverse order), so taking
+-- spaces[1] would give them the last desktop's name, not the focused one's.
+function Chrome.homeSpace(hsWin)
+    local spaces = hsWin.spaces or {}
+    return #spaces == 1 and spaces[1] or nil
+end
+
 -- Decide renames.
 --   pairs_:         from matchWindows; each hs window carries `spaces` (list of ids)
 --   spaceNames:     spaceId -> the name its windows should carry (see
@@ -190,7 +198,7 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames, i
         local target = spaceNames[inbox.spaceId]
         for _, p in ipairs(pairs_) do
             local current = p.chrome.givenName or ""
-            local spaceId = p.hs.spaces and p.hs.spaces[1]
+            local spaceId = Chrome.homeSpace(p.hs)
             if not exists and spaceId == inbox.spaceId and
                 (current == "" or (target ~= nil and ownName(current, target))) and
                 (newInbox == nil or byId(p, newInbox)) then
@@ -202,7 +210,7 @@ function Chrome.plan(pairs_, spaceNames, renamedSpaces, allWindows, keepNames, i
     local wanting = {}
     for _, p in ipairs(pairs_) do
         local current = p.chrome.givenName or ""
-        local spaceId = p.hs.spaces and p.hs.spaces[1]
+        local spaceId = Chrome.homeSpace(p.hs)
         if p ~= newInbox and spaceId ~= nil and not Chrome.isDateName(current) and not keepNames[current] then
             if renamedSpaces[spaceId] then
                 table.insert(wanting, { pair = p, target = spaceNames[spaceId] })
