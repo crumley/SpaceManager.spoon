@@ -287,8 +287,9 @@ end
 -- bounds {x, y, width, height}. With labelPages (urls), also front (Chrome's
 -- front window) and labels, the window's tabs showing one of those pages
 -- {index=, url=}. nil when Chrome is not running or refuses. Incognito
--- windows, and windows found to take no tabs (see chromeTabless), are left
--- out: SpaceManager never names, labels or routes links to them.
+-- windows, windows without a close button (including Meet's PiP), and
+-- windows found to take no tabs (see chromeTabless) are left out:
+-- SpaceManager never names, labels or routes links to them.
 function m:_chromeScriptWindows(labelPages)
     if not m:_chromeApp() then
         return nil
@@ -299,10 +300,11 @@ function m:_chromeScriptWindows(labelPages)
         const labelPages = %s;
         const ws = Application("Google Chrome").windows;
         const ids = ws.id(), titles = ws.title(), names = ws.givenName(), bounds = ws.bounds(), modes = ws.mode();
+        const closeables = ws.closeable();
         const indexes = labelPages ? ws.index() : [], urls = labelPages ? ws.tabs.url() : [];
         JSON.stringify(ids.flatMap((id, i) => modes[i] === "incognito" ? [] : [i]).map(i => {
             const id = ids[i];
-            const w = { id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i] };
+            const w = { id: String(id), title: titles[i], givenName: names[i], bounds: bounds[i], closeable: closeables[i] };
             if (labelPages) {
                 w.front = indexes[i] === 1;
                 w.labels = [];
@@ -319,7 +321,7 @@ function m:_chromeScriptWindows(labelPages)
     end
     local windows = {}
     for _, w in ipairs(hsjson.decode(result) or {}) do
-        if not m.chromeTabless[w.id] then
+        if w.closeable ~= false and not m.chromeTabless[w.id] then
             table.insert(windows, w)
         end
     end
@@ -381,10 +383,11 @@ end
 -- read. Without the extension, a new label is pinned here.
 --
 -- A popup window takes no new tabs: Chrome opens the tab in a normal window
--- instead and brings that one to the front, burying the popup. Chrome's
--- scripting cannot tell a popup from any other window, so this is how one is
--- found: the stray tab is closed again, the popup put back in front and its
--- name cleared, and the window is left alone from then on (chromeTabless).
+-- instead and brings that one to the front, burying the popup. Non-closeable
+-- windows such as Meet PiP are excluded before this point. This fallback
+-- handles other popups scripting could not identify: the stray tab is closed
+-- again, the popup put back in front and its name cleared, and the window is
+-- left alone from then on (chromeTabless).
 function m:_applyChromeLabels(actions)
     local ok, result = javascript(string.format([[
         const [actions, labelPages, pinHere] = %s;
@@ -605,11 +608,20 @@ function m:reconcileChromeWindows(force)
         for _, change in ipairs(changes) do
             renamed[change.id] = change.name
         end
+        local labelable = {}
+        for _, p in ipairs(pairs_) do
+            if Chrome.homeSpace(p.hs) ~= nil then
+                labelable[p.chrome.id] = true
+            end
+        end
         local windows = {}
         for _, w in ipairs(scripted) do
-            -- Without the extension a new label is pinned through Chrome's
-            -- menu bar, which only works while Chrome is the active app.
-            local front = w.front and (m.chromeExtension or app:isFrontmost())
+            -- Adding a tab is not a safe popup probe: Chrome can put it in a
+            -- different window. Require a standard, matched, single-home
+            -- window first. Existing labels can still update offspace even
+            -- when Hammerspoon cannot currently match their window.
+            -- Without the extension pinning also requires the active app.
+            local front = w.front and labelable[w.id] and (m.chromeExtension or app:isFrontmost())
             table.insert(windows, { id = w.id, givenName = renamed[w.id] or w.givenName, front = front,
                 labels = w.labels })
         end
@@ -638,10 +650,16 @@ function m:reconcileChromeWindows(force)
     end
     local byId = {}
     for _, change in ipairs(changes) do
-        byId[change.id] = change.name
-        m.logger.d("Chrome window", change.id, "->", change.name == "" and "(cleared)" or change.name)
+        -- The label fallback may just have discovered a popup and cleared
+        -- its name. Do not immediately put that planned name back on it.
+        if not m.chromeTabless[change.id] then
+            byId[change.id] = change.name
+            m.logger.d("Chrome window", change.id, "->", change.name == "" and "(cleared)" or change.name)
+        end
     end
-    m:_setChromeWindowNames(byId)
+    if next(byId) then
+        m:_setChromeWindowNames(byId)
+    end
 end
 
 function m:_tick(force)

@@ -38,6 +38,10 @@ Chrome windows named after the space they are on.
   new number too. Windows on an unnamed space are
   left unnamed. Reconciled when a Chrome window appears, when the active space
   changes, on wake or unlock, and every `chromeNamesInterval` seconds.
+  Incognito and non-closeable windows (including Google Meet's
+  picture-in-picture) are left alone. A window reported on several spaces
+  has no unique home, so it receives no space-derived rename or new label
+  tab; existing names and labels can remain.
 - **Chrome window label tabs** (`chromeWindowLabels`, with
   `chromeWindowNames`). A window named after a space keeps a pinned tab of
   the label page (`chrome-extension/label.html`): its icon is
@@ -119,8 +123,10 @@ The pure modules (`chrome.lua`: pairing Chrome's scripting windows with
 Hammerspoon's and deciding names; `state.lua`: persisted space names;
 `jxa.lua`: running JavaScript for Automation) are unit tested under plain Lua.
 `mission_control.lua` is tested with injected accessibility and timer fakes
-for both macOS layouts, delayed trees and switch failures. `init.lua` talks
-to Hammerspoon and Chrome and is exercised in Hammerspoon by hand.
+for both macOS layouts, delayed trees and switch failures. Chrome
+reconciliation in `init.lua` has snapshot-based regression tests for PiP,
+label eligibility and space numbering. Actual Apple Events and accessibility
+integration are exercised in Hammerspoon by hand.
 
 Space names are saved by each space's uuid, not its id. macOS's space ids
 (`ManagedSpaceID`) last one login: after a reboot it numbers the spaces

@@ -218,6 +218,21 @@ describe("Chrome.plan", function()
     it("does nothing for a window on no known space", function()
         assert.are.same({}, Chrome.plan({ { chrome = { id = "c", givenName = "" }, hs = { spaces = {} } } }, names, none))
     end)
+
+    it("does not name or rename a floating window reported on several spaces", function()
+        local floating = pair("1", "", 3)
+        floating.hs.spaces = { 3, 1 } -- PiP can report every desktop, last first
+        assert.are.same({}, Chrome.plan({ floating }, names, none))
+        floating.chrome.givenName = "Taxes"
+        assert.are.same({}, Chrome.plan({ floating }, names, { [3] = true }))
+    end)
+
+    it("does not select an all-spaces window as the Inbox", function()
+        local floating = pair("1", "", 1)
+        floating.hs.spaces = { 1, 3 }
+        assert.are.same({}, Chrome.plan({ floating }, names, none, nil, nil,
+            { name = "📥 Inbox", spaceId = 1 }))
+    end)
 end)
 
 describe("Chrome.linkTarget", function()
